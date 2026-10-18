@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  WAREHOUSE_MANAGER
+  SALES
+  ACCOUNT
+}
+
+enum OutwardStatus {
+  PENDING_APPROVAL   // created by Sales, waiting for the Account team
+  PENDING_DISPATCH   // LEGACY: old "approved" value. Rows are moved to TRANSPORT_PENDING / DOCS_PENDING / READY_FOR_DISPATCH by the backfill migration; no new rows use it
+  TRANSPORT_PENDING  // approved by Account, waiting for the Warehouse manager's transportation details
+  DOCS_PENDING       // transportation sent, waiting for the Account team's documents (DC Challan / Without Invoice releases it)
+  READY_FOR_DISPATCH // transportation + Account documents done, Warehouse manager can fill the dispatch form. Locked for Sales / Account edits.
+  DISPATCHED         // Warehouse manager filled dispatch details ("Delivered pending" in the UI)
+  DELIVERED          // receiving form filled
+  REJECTED           // Account rejected it; Sales can edit + resubmit
+  ON_HOLD            // Account put it on hold (reason given); Account can approve / reject later, Sales can edit + resubmit
+}
+
+enum CostStatus {
+  COMPLETED
+  PARTIALLY_COMPLETED
+  PENDING
+}
+
+enum AccessLevel {
+  NONE
+  MANAGE
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  locality  String?
+  city      String?
+  state     String?
+  pincode   String?
+  status    String   @default("Active")
+  createdAt DateTime @default(now())
+
+  warehouses Warehouse[]
+
+  // Users whose PRIMARY company this is (kept for backward compatibility).
+  users User[]
+
+  // Every user that belongs to this company (a user can have many companies).
+  members UserCompany[]
+
+  // Customers saved for this company (shared by every user of the company).
+  customers Customer[]
+}
+
+// Customer names added with "+ Add" on the outward form. One list per company, shown to every user of the company.
+model Customer {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  nameKey     String   // lower-case name: makes the name unique per company ignoring upper / lower case
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, nameKey])
+  @@index([companyId])
+}
+
+model Warehouse {
+  id       String  @id @default(uuid())
+  name     String
+  code     String  @unique
+  locality String?
+  city     String
+  state    String
+  pincode  String
+
+  Inward  String @default("Active")
+  Outward String @default("Active")
+
+  createdAt DateTime @default(now())
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  access    WarehouseAccess[]
+  grns      Grn[]
+  mins      Min[]
+  models    WarehouseModel[]
+  companies WarehouseCompany[]
+  auditLogs AuditLog[]
+
+  @@index([companyId])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  // Primary company. Always one of the companies in `companies` below.
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  // All companies this user belongs to.
+  companies UserCompany[]
+
+  warehouseAccess WarehouseAccess[]
+  grns            Grn[]
+  mins            Min[]
+  documents       Document[]
+  auditLogs       AuditLog[]
+}
+
+// Join table: which companies a user belongs to (many-to-many).
+model UserCompany {
+  userId    String
+  companyId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([userId, companyId])
+  @@index([companyId])
+}
+
+model WarehouseAccess {
+  id          String @id @default(uuid())
+  userId      String
+  warehouseId String
+
+  accessLevel AccessLevel @default(NONE)
+
+  canInward          Boolean @default(false)
+  canOutward         Boolean @default(false)
+  canManageDocuments Boolean @default(false)
+
+  grantedAt DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, warehouseId])
+  @@index([warehouseId])
+  @@index([userId])
+}
+
+model Grn {
+  id String @id @default(uuid())
+
+  grnNumber  String @unique
+  inwardType String
+
+  supplierName String
+  companyName  String?
+
+  refDocType     String
+  refDocNumber   String
+  refDocDate     DateTime
+  ewayBillNumber String?
+  remarks        String?
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  items              GrnItem[]
+  serials            GrnSerial[]
+  referenceDocuments GrnReferenceDocument[]
+
+  @@index([warehouseId])
+  @@index([createdById])
+  // list page: newest first inside a warehouse
+  @@index([warehouseId, createdAt])
+}
+
+model GrnItem {
+  id String @id @default(uuid())
+
+  grnId       String
+  category    String
+  companyName String?
+  sku         String
+  quantity    Int
+  uom         String
+
+  grn Grn @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@index([grnId])
+  @@index([category, companyName])
+  // stock totals + SKU search
+  @@index([category, sku])
+}
+
+model GrnReferenceDocument {
+  id String @id @default(uuid())
+
+  grnId String
+
+  refDocType     String
+  refDocNumber   String?
+  ewayBillNumber String?
+  createdAt      DateTime @default(now())
+
+  grn Grn @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@index([grnId])
+}
+
+model Min {
+  id String @id @default(uuid())
+
+  outwardNumber String @unique
+  outwardType   String
+
+  customerName String
+  companyName  String?
+
+  piNumber   String?
+  piDate     DateTime?
+  piAmount   Decimal?  @db.Decimal(14, 2)
+  piFileKey  String?   // Supabase key of the uploaded PI file
+  piFileName String?
+  piFileType String?
+
+  // Ship to details (entered by Sales, after the PI row)
+  shipToContactPerson String?
+  shipToContactNo     String?
+  shipToLocation      String?
+
+  // Bill to details (entered by Sales)
+  billToContactPerson String?
+  billToContactNo     String?
+  billToEmail         String?
+
+  // Sales' note for the warehouse (separate from the warehouse manager's own `remarks` below)
+  dispatchRemarks String?
+
+  refDocType     String
+  refDocNumber   String
+  refDocDate     DateTime
+  ewayBillNumber String?
+
+  dispatchMode  String?
+  vehicleNumber String?
+  remarks       String?
+
+  // Dispatch details (warehouse manager)
+  driverName    String?
+  driverContact String?
+  transportMode            String?    // DEDICATED | TRANSPORTATION
+  transporterId            String?    // when transportMode = TRANSPORTATION
+  transporterName          String?    // when transportMode = TRANSPORTATION
+  transporterContact       String?    // when transportMode = TRANSPORTATION
+  transportSubmittedById   String?
+  transportSubmittedByName String?
+  transportSubmittedAt     DateTime?  // null = transportation form still pending
+
+  // Receiving details (warehouse manager, after dispatch)
+  receivedDate     DateTime?   // receiving date picked from the calendar
+  receiverName     String?
+  receiverContact  String?
+  receivingRemarks String?
+  receivedById     String?
+  receivedByName   String?
+  receivedAt       DateTime?   // when the receiving form was first saved (null = receiving still pending)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  items              MinItem[]
+  serials            MinSerial[]
+  referenceDocuments MinReferenceDocument[]
+  status             OutwardStatus @default(PENDING_APPROVAL)
+
+  approvedById    String?
+  approvedByName  String?
+  approvedAt      DateTime?
+  approvalRemarks String?          // reason when rejected / note when approved
+
+  dispatchedById   String?
+  dispatchedByName String?
+  dispatchedAt     DateTime?
+
+  @@index([status])
+  @@index([warehouseId])
+  @@index([createdById])
+  // list page + KPI counts: newest first / by status inside a warehouse
+  @@index([warehouseId, createdAt])
+  @@index([warehouseId, status, createdAt])
+  // customer dropdown
+  @@index([warehouseId, customerName])
+}
+
+model MinItem {
+  id String @id @default(uuid())
+
+  minId       String
+  category    String
+  companyName String?
+  sku         String
+  quantity    Int
+  uom         String
+
+  min Min @relation(fields: [minId], references: [id], onDelete: Cascade)
+
+  // REMOVED: cost Decimal? @db.Decimal(14, 2)
+  // RENAMED: costStatus -> paymentStatus (same database column + same enum, so no data is lost)
+  paymentStatus CostStatus? @map("costStatus")
+  utrNumber     String?
+  approvedBy    String?     // "Approve By" - used while payment status is Pending / Partially completed
+  proofFileKey  String?     // Supabase key of the uploaded UTR image / file
+  proofFileName String?
+  proofFileType String?
+
+  @@index([minId])
+  @@index([category, companyName])
+  // stock totals + SKU search
+  @@index([category, sku])
+}
+
+model MinReferenceDocument {
+  id String @id @default(uuid())
+
+  minId String
+
+  refDocType     String
+  refDocNumber   String?
+  ewayBillNumber String?
+  vehicleNumber  String?   // vehicle no. of a DC Challan reference (Account)
+  createdAt      DateTime @default(now())
+
+  min Min @relation(fields: [minId], references: [id], onDelete: Cascade)
+
+  @@index([minId])
+}
+
+model WarehouseCompany {
+  id String @id @default(cuid())
+
+  warehouseId String
+  name        String
+  createdAt   DateTime @default(now())
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, name])
+  @@index([warehouseId])
+}
+
+model WarehouseModel {
+  id String @id @default(uuid())
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  category    String
+  companyName String?
+  name        String
+
+  createdAt DateTime @default(now())
+
+  @@unique([warehouseId, category, companyName, name])
+  @@index([warehouseId])
+  @@index([warehouseId, category, companyName])
+}
+
+model Document {
+  id String @id @default(uuid())
+
+  linkedType  String
+  linkedId    String
+  docCategory String
+
+  fileKey  String
+  fileType String
+  fileSize Int
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  uploadedAt DateTime @default(now())
+
+  @@index([linkedType, linkedId])
+  @@index([uploadedById])
+  @@index([docCategory])
+}
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  entityType   String
+  entityId     String
+  entityNumber String
+
+  action      String
+  description String
+  changes     Json?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([entityNumber])
+  @@index([userId])
+  @@index([warehouseId])
+  @@index([createdAt])
+}
+
+model Product {
+  id        String   @id @default(uuid())
+  category  String
+  sku       String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([category, sku])
+  @@index([category])
+}
+
+model MinSerial {
+  id String @id @default(uuid())
+
+  minId String
+  min   Min    @relation(fields: [minId], references: [id], onDelete: Cascade)
+
+  // Stored per category + SKU (not per MinItem row), because editing an entry rewrites its item rows.
+  category  String
+  sku       String
+  serialNo  String
+  source    String   @default("MANUAL") // MANUAL | CAMERA | SCANNER
+  createdAt DateTime @default(now())
+
+  @@unique([minId, serialNo])
+  @@index([serialNo])
+  @@index([minId, category, sku])
+}
+
+model GrnSerial {
+  id String @id @default(uuid())
+
+  grnId String
+  grn   Grn    @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  // Stored per category + SKU (not per GrnItem row), because editing an entry rewrites its item rows.
+  category  String
+  sku       String
+  serialNo  String
+  source    String   @default("MANUAL") // MANUAL | CAMERA | SCANNER
+  createdAt DateTime @default(now())
+
+  @@unique([grnId, serialNo])
+  @@index([serialNo])
+  @@index([grnId, category, sku])
+}

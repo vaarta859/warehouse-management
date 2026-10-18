@@ -1,0 +1,331 @@
+import { useEffect, useMemo, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { Link } from "react-router-dom";
+import { ArrowLeft, ChevronDown, PackageMinus, PackagePlus, Search, Warehouse } from "lucide-react";
+
+import { fetchWarehouses, selectWarehouses } from "../features/warehouse/warehouseSlice";
+import {
+  fetchStockLedger,
+  selectStockLedger,
+  selectStockLedgerTotals,
+  selectStockLedgerPagination,
+  selectStockLedgerStatus,
+  selectStockLedgerError,
+} from "../features/reports/reportSlice";
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("en-IN");
+}
+
+function TotalCard({ icon: Icon, iconClass, label, value }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-500">{label}</p>
+        <Icon size={17} className={iconClass} />
+      </div>
+      <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+export default function StockLedger() {
+  const dispatch = useDispatch();
+
+  const warehouses = useSelector(selectWarehouses);
+  const rows = useSelector(selectStockLedger);
+  const totals = useSelector(selectStockLedgerTotals);
+  const pagination = useSelector(selectStockLedgerPagination);
+  const status = useSelector(selectStockLedgerStatus);
+  const error = useSelector(selectStockLedgerError);
+  const loading = status === "loading";
+
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+
+  // Company -> warehouse. Both empty = total stock across everything the user
+  // can see. These are local to this page (they don't change the navbar's warehouse).
+  const [companyId, setCompanyId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
+
+  // The server already limits this list by role (a manager only gets the
+  // warehouses they manage), so the dropdowns can't offer anything off-limits.
+  useEffect(() => {
+    dispatch(fetchWarehouses({}));
+  }, [dispatch]);
+
+  const companyOptions = useMemo(() => {
+    const seen = new Map();
+    warehouses.forEach((w) => {
+      const id = w.companyId || w.company?.id;
+      if (id && !seen.has(id)) seen.set(id, { id, name: w.company?.name || "Company" });
+    });
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [warehouses]);
+
+  const warehouseOptions = useMemo(() => {
+    if (!companyId) return [];
+    return warehouses
+      .filter((w) => (w.companyId || w.company?.id) === companyId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [warehouses, companyId]);
+
+  const selectedCompany = companyOptions.find((c) => c.id === companyId);
+  const selectedWarehouse = warehouseOptions.find((w) => w.id === warehouseId);
+
+  const scopeLabel = selectedWarehouse
+    ? `${selectedWarehouse.name}${selectedWarehouse.code ? ` (${selectedWarehouse.code})` : ""}`
+    : selectedCompany
+      ? `${selectedCompany.name} - all warehouses`
+      : "Total stock - all warehouses";
+
+  const handleCompanyChange = (id) => {
+    setCompanyId(id);
+    setWarehouseId(""); // the old warehouse belongs to the previous company
+    setPage(1);
+  };
+
+  const handleWarehouseChange = (id) => {
+    setWarehouseId(id);
+    setPage(1);
+  };
+
+  const showTotalStock = () => {
+    setCompanyId("");
+    setWarehouseId("");
+    setPage(1);
+  };
+
+  const ledgerParams = {
+    warehouseId: warehouseId || undefined,
+    companyId: companyId || undefined,
+    search,
+    page,
+    pageSize: 20,
+  };
+
+  // Reset to page 1 whenever the search term changes.
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  // Debounce search so every keystroke doesn't fire a request. Always loads:
+  // with no company / warehouse chosen it is the total stock.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      dispatch(
+        fetchStockLedger({
+          warehouseId: warehouseId || undefined,
+          companyId: companyId || undefined,
+          search,
+          page,
+          pageSize: 20,
+        })
+      );
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [dispatch, warehouseId, companyId, search, page]);
+
+  const selectCls =
+    "w-full appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400";
+
+  return (
+    <div className="min-h-dvh bg-[#F1EFE8] p-4 sm:p-6">
+      {/* =================================================
+          HEADER
+      ================================================= */}
+
+      <div className="mx-auto max-w-5xl">
+        <Link to="/reports" className="mb-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700">
+          <ArrowLeft size={14} />
+          Back to Reports
+        </Link>
+
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900 sm:text-2xl">Stock Ledger Summary</h1>
+            <p className="mt-0.5 text-xs text-gray-500 sm:mt-1 sm:text-sm">{scopeLabel}</p>
+          </div>
+
+          <div className="relative">
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search category or model"
+              className="w-64 rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+        </div>
+
+        {/* =================================================
+            COMPANY -> WAREHOUSE
+            Nothing chosen = total stock.
+        ================================================= */}
+
+        <div className="mb-6 grid grid-cols-1 items-end gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-[1fr_1fr_auto]">
+          <div>
+            <label className="mb-1.5 block text-sm font-semibold text-black">Company</label>
+            <div className="relative">
+              <select value={companyId} onChange={(e) => handleCompanyChange(e.target.value)} className={selectCls}>
+                <option value="">All companies</option>
+                {companyOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-semibold text-black">Warehouse</label>
+            <div className="relative">
+              <select
+                value={warehouseId}
+                disabled={!companyId}
+                onChange={(e) => handleWarehouseChange(e.target.value)}
+                className={selectCls}
+              >
+                <option value="">{companyId ? "All warehouses" : "Select company first"}</option>
+                {warehouseOptions.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}{w.code ? ` (${w.code})` : ""}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={showTotalStock}
+            disabled={!companyId && !warehouseId}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Show total stock
+          </button>
+        </div>
+
+        <>
+            {/* =============================================
+                TOTALS
+            ============================================= */}
+
+            <div className="mb-6 grid grid-cols-3 gap-3 sm:gap-4">
+              <TotalCard
+                icon={Warehouse}
+                iconClass="text-purple-600"
+                label="Current Stock"
+                value={loading && !totals ? "—" : `${formatNumber(totals?.currentStock)} units`}
+              />
+              <TotalCard
+                icon={PackagePlus}
+                iconClass="text-green-600"
+                label="Total Inward (all-time)"
+                value={loading && !totals ? "—" : formatNumber(totals?.totalInward)}
+              />
+              <TotalCard
+                icon={PackageMinus}
+                iconClass="text-amber-600"
+                label="Total Outward (all-time)"
+                value={loading && !totals ? "—" : formatNumber(totals?.totalOutward)}
+              />
+            </div>
+
+            {/* =============================================
+                TABLE
+            ============================================= */}
+
+            {status === "failed" && (
+              <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4">
+                <p className="text-sm font-medium text-red-600">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => dispatch(fetchStockLedger(ledgerParams))}
+                  className="mt-3 rounded-lg bg-[#185FA5] px-4 py-2 text-xs font-semibold text-white"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                <h3 className="text-sm font-semibold text-gray-900">Items</h3>
+                <p className="text-xs text-gray-500">{pagination ? `${formatNumber(pagination.total)} items` : ""}</p>
+              </div>
+
+              {loading && (
+                <div className="px-5 py-10 text-center">
+                  <p className="text-sm text-gray-500">Loading stock ledger...</p>
+                </div>
+              )}
+
+              {!loading && rows.length === 0 && (
+                <div className="px-5 py-10 text-center">
+                  <p className="text-sm text-gray-500">No items found.</p>
+                </div>
+              )}
+
+              {!loading && rows.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="mobile-cards w-full min-w-[620px] text-left">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Category</th>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Model / SKU</th>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">UOM</th>
+                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Inward</th>
+                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outward</th>
+                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Current Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {rows.map((row) => (
+                        <tr key={`${row.category}-${row.sku}`}>
+                          <td className="px-5 py-3.5 text-xs text-gray-700">{row.category}</td>
+                          <td className="px-5 py-3.5 text-xs font-medium text-gray-800">{row.sku}</td>
+                          <td className="px-5 py-3.5 text-xs text-gray-500">{row.uom}</td>
+                          <td className="px-5 py-3.5 text-right text-xs font-semibold text-green-700">+{formatNumber(row.inward)}</td>
+                          <td className="px-5 py-3.5 text-right text-xs font-semibold text-red-600">-{formatNumber(row.outward)}</td>
+                          <td className="px-5 py-3.5 text-right text-sm font-semibold tabular-nums text-gray-900">
+                            {formatNumber(row.currentStock)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {pagination && pagination.totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
+                  <p className="text-xs text-gray-500">
+                    Page {pagination.page} of {pagination.totalPages}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={pagination.page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pagination.page >= pagination.totalPages}
+                      onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+        </>
+      </div>
+    </div>
+  );
+}

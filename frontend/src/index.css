@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/* ---------- Mobile / responsive base ---------- */
+html, body, #root { max-width: 100%; }
+body { overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+img, svg, video { max-width: 100%; }
+
+@media (max-width: 767px) {
+  /* 16px inputs stop iOS from zooming the page when a field is focused */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea { font-size: 16px !important; }
+
+  /* list filter drop-downs stay compact so all three fit in one row */
+  select.filter-select { font-size: 12px !important; }
+
+  /* Tables with class "mobile-cards" become one card per row */
+  table.mobile-cards { min-width: 0 !important; width: 100% !important; display: block; }
+  table.mobile-cards thead { display: none; }
+  table.mobile-cards tbody { display: block; }
+  table.mobile-cards tr { display: block; margin: 0 0 12px; padding: 4px 12px; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; }
+  table.mobile-cards td { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0 !important; border: 0 !important; text-align: right; word-break: break-word; }
+  table.mobile-cards td + td { border-top: 1px solid #f3f4f6 !important; }
+  table.mobile-cards td[data-label]::before { content: attr(data-label); flex: 0 0 38%; text-align: left; font-size: 12px; font-weight: 600; color: #000; }
+  table.mobile-cards td[colspan] { display: block; text-align: center; }
+}
