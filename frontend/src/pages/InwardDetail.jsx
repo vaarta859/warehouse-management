@@ -3,6 +3,7 @@ import { needsSerials, serialKey } from "../features/outward/serialHelpers";
 import {
   ArrowLeft,
   Download,
+  Eye,
   Trash2,
   Upload,
   FileText,
@@ -148,12 +149,12 @@ export default function InwardDetail() {
     handleUpload(event, category);
   };
 
-  const handleDownload = (documentId) => {
+  const handleDownload = (documentId, mode = "download") => {
     if (!documentId) {
       toast.error("Document ID is missing.");
       return;
     }
-    dispatch(downloadInwardDocument({ documentId })).then((result) => {
+    dispatch(downloadInwardDocument({ documentId, mode })).then((result) => {
       if (downloadInwardDocument.rejected.match(result)) {
         toast.error(result.payload?.message || "Unable to download file.");
       }
@@ -450,7 +451,18 @@ export default function InwardDetail() {
                         <>
                           <button
                             type="button"
-                            onClick={() => handleDownload(document.id)}
+                            onClick={() => handleDownload(document.id, "view")}
+                            disabled={isDownloading || isDeleting}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border hover:bg-gray-50 disabled:opacity-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-sm"
+                            title="View"
+                          >
+                            <Eye size={16} />
+                            <span className="hidden sm:inline">View</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDownload(document.id, "download")}
                             disabled={isDownloading || isDeleting}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border hover:bg-gray-50 disabled:opacity-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-sm"
                             title="Download"

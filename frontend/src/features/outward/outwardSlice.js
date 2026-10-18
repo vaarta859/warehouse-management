@@ -49,6 +49,7 @@ const initialState = {
 // Thunks
 // -------------------------------------------------
 
+import { handleSignedUrl } from "../shared/fileActions";
 export const fetchOutwardList = createAsyncThunk(
   "outward/fetchList",
   async (
@@ -364,12 +365,12 @@ export const deleteOutwardEntry = createAsyncThunk(
 // Opens the payment proof of one item in a new tab (Sales / Account / Admin only).
 export const downloadItemProof = createAsyncThunk(
   "outward/downloadItemProof",
-  async ({ outwardId, itemId }, { rejectWithValue }) => {
+  async ({ outwardId, itemId, mode = "view" }, { rejectWithValue }) => {
     try {
-      const { data } = await apiClient.get(`/api/outward/${outwardId}/items/${itemId}/proof`);
+      const { data } = await apiClient.get(`/api/outward/${outwardId}/items/${itemId}/proof`, { params: mode === "download" ? { download: 1 } : undefined });
       const url = data.data?.url;
       if (!url) throw new Error("Download URL was not generated.");
-      window.open(url, "_blank", "noopener,noreferrer");
+      handleSignedUrl(url, mode);
       return { itemId };
     } catch (err) {
       return rejectWithValue(err.response?.data?.message || err.message || "Unable to open the proof file.");
@@ -380,12 +381,12 @@ export const downloadItemProof = createAsyncThunk(
 // Opens the PI (proforma invoice) file of an entry in a new tab (Sales / Account / Admin only).
 export const downloadPiFile = createAsyncThunk(
   "outward/downloadPiFile",
-  async ({ outwardId }, { rejectWithValue }) => {
+  async ({ outwardId, mode = "view" }, { rejectWithValue }) => {
     try {
-      const { data } = await apiClient.get(`/api/outward/${outwardId}/pi-file`);
+      const { data } = await apiClient.get(`/api/outward/${outwardId}/pi-file`, { params: mode === "download" ? { download: 1 } : undefined });
       const url = data.data?.url;
       if (!url) throw new Error("Download URL was not generated.");
-      window.open(url, "_blank", "noopener,noreferrer");
+      handleSignedUrl(url, mode);
       return { outwardId };
     } catch (err) {
       return rejectWithValue(err.response?.data?.message || err.message || "Unable to open the PI file.");
@@ -425,10 +426,11 @@ export const uploadOutwardDocument = createAsyncThunk(
 // document regardless of which entry it hangs off of.
 export const downloadOutwardDocument = createAsyncThunk(
   "outward/downloadDocument",
-  async ({ documentId }, { rejectWithValue }) => {
+  async ({ documentId, mode = "download" }, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.get(
-        `/api/documents/${documentId}/download`
+        `/api/documents/${documentId}/download`,
+        { params: mode === "download" ? { download: 1 } : undefined }
       );
 
       const signedUrl = data.data?.url;
@@ -437,7 +439,7 @@ export const downloadOutwardDocument = createAsyncThunk(
         throw new Error("Download URL was not generated.");
       }
 
-      window.open(signedUrl, "_blank", "noopener,noreferrer");
+      handleSignedUrl(signedUrl, mode);
 
       return { documentId };
     } catch (err) {

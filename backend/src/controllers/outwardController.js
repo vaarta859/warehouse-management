@@ -100,8 +100,9 @@ async function getScopedWarehouseIds(req) {
 // Extra list filter that depends on who is asking.
 function roleWhere(req) {
   switch (req.user.role) {
-    // Own entries + entries the super admin created (warehouse scope already limits these to the user's company).
-    case "SALES": return { OR: [{ createdById: req.user.id }, { createdBy: { role: "SUPER_ADMIN" } }] };
+    // Sales sees every entry of the warehouses of their company(ies), whoever on the team created it
+    // (the warehouse scope applied by the callers already limits the list to the user's company).
+    case "SALES": return {};
     case "WAREHOUSE_MANAGER": return { status: { in: WAREHOUSE_VISIBLE_STATUSES } };
     default: return {};
   }
@@ -144,16 +145,8 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
 async function assertEntryVisible(req, min) {
   const role = req.user.role;
   if (role === "SUPER_ADMIN") return;
-  if (role === "SALES") {
-    if (min.createdById !== req.user.id) {
-      // Entries created by the super admin are visible too, but only for the Sales user's own company.
-      const creator = await prisma.user.findUnique({ where: { id: min.createdById }, select: { role: true } });
-      if (creator?.role !== "SUPER_ADMIN") throw httpError(403, "You can only view outward entries you created");
-      await assertWarehouseAccess(req, min.warehouseId, null);
-    }
-    return;
-  }
-  if (role === "ACCOUNT") {
+  // Sales and Account: any entry of a warehouse that belongs to one of their companies (the whole team shares them).
+  if (role === "SALES" || role === "ACCOUNT") {
     await assertWarehouseAccess(req, min.warehouseId, null);
     return;
   }
@@ -742,14 +735,8 @@ export async function updateOutward(req, res) {
 
     const isAdmin = req.user.role === "SUPER_ADMIN";
     if (!isAdmin) {
-      // Sales can edit entries they created themselves, or entries created by the super admin
-      // (company access is still enforced below by assertWarehouseAccess).
-      if (existing.createdById !== req.user.id) {
-        const creator = await prisma.user.findUnique({ where: { id: existing.createdById }, select: { role: true } });
-        if (creator?.role !== "SUPER_ADMIN") {
-          return res.status(403).json({ message: "You can only edit outward entries you created or that the admin created" });
-        }
-      }
+      // Any Sales user of the same company can edit the team's entries (company access is enforced below by
+      // assertWarehouseAccess). The lock / status rules still apply.
       const lockReason = await lockReasonFor(prisma, existing);
       if (lockReason || !SALES_EDITABLE_STATUSES.includes(existing.status)) {
         return res.status(409).json({ message: lockReason || "This entry can no longer be edited" });
@@ -1717,7 +1704,7 @@ export async function listOutwardHistory(req, res) {
 
     const isWarehouse = req.user.role === "WAREHOUSE_MANAGER";
 
-    // Sales only sees the trail of their own entries and the super admin's entries for their company; a warehouse manager only
+    // Sales sees the trail of every entry of their company; a warehouse manager only
     // the entries that reached the warehouse, minus the PI / payment / approval lines.
     let entityFilter = {};
     if (req.user.role === "SALES" || isWarehouse) {

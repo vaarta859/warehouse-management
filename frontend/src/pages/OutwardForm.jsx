@@ -132,6 +132,8 @@ export default function OutwardForm() {
   const [billToContactPerson, setBillToContactPerson] = useState("");
   const [billToContactNo, setBillToContactNo] = useState("");
   const [billToEmail, setBillToEmail] = useState("");
+  // Sales' note for the warehouse team (shown to the warehouse manager on the dispatch screens).
+  const [salesDispatchRemarks, setSalesDispatchRemarks] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [pickedWarehouseId, setPickedWarehouseId] = useState("");
   const [entryWarehouse, setEntryWarehouse] = useState(null); // edit mode: the entry's own warehouse
@@ -219,7 +221,7 @@ export default function OutwardForm() {
     : companyWarehouses.find((w) => w.id === pickedWarehouseId) || null;
   const warehouseId = selectedWarehouse?.id || "";
 
-  // Every customer added in this warehouse (by anyone) shows in the Customer Name dropdown.
+  // Every customer added for this company (by anyone) shows in the Customer Name dropdown.
   const [sharedCustomers, setSharedCustomers] = useState([]);
   useEffect(() => {
     if (!warehouseId) { setSharedCustomers([]); return undefined; }
@@ -230,6 +232,15 @@ export default function OutwardForm() {
       .catch(() => { if (!cancelled) setSharedCustomers([]); });
     return () => { cancelled = true; };
   }, [warehouseId]);
+
+  // "+ Add" saves the customer on the server for the whole company, so it is in the dropdown for every user, every time.
+  const saveCustomer = (name) => {
+    setSharedCustomers((prev) => (prev.some((c) => c.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]));
+    if (!warehouseId) return;
+    apiClient.post("/api/outward/customers", { warehouseId, name }).catch((err) => {
+      toast.error(err.response?.data?.message || "Customer could not be saved for other users.");
+    });
+  };
 
   // New entry: a proof was saved under the previously selected warehouse's folder, so drop it
   // when the warehouse changes and let the user attach it again.
@@ -278,6 +289,7 @@ export default function OutwardForm() {
       setBillToContactPerson(x.billToContactPerson || "");
       setBillToContactNo(x.billToContactNo || "");
       setBillToEmail(x.billToEmail || "");
+      setSalesDispatchRemarks(x.dispatchRemarks || "");
       setKeepPiFile(Boolean(x.hasPiFile));
       setSavedPiFileName(x.piFileName || "");
       setItems(
@@ -535,6 +547,7 @@ export default function OutwardForm() {
       billToContactPerson: billToContactPerson.trim() || undefined,
       billToContactNo: billToContactNo.trim() || undefined,
       billToEmail: billToEmail.trim() || undefined,
+      dispatchRemarks: salesDispatchRemarks.trim() || undefined,
       items: items.map((i) => {
         const paid = payment.paymentStatus !== "PENDING";
         return {
@@ -701,7 +714,7 @@ export default function OutwardForm() {
               </div>
             </div>
             <div className="mt-4">
-              <PartyNameField value={customerName} onChange={setCustomerName} sharedOptions={sharedCustomers} storageKey="outward-customer-names" label="Customer Name" labelCls={labelCls} inputCls={inputCls} placeholder="Enter customer name" addLabel="+ Add new customer" />
+              <PartyNameField value={customerName} onChange={setCustomerName} sharedOptions={sharedCustomers} onAddOption={saveCustomer} storageKey="outward-customer-names" label="Customer Name" labelCls={labelCls} inputCls={inputCls} placeholder="Enter customer name" addLabel="+ Add new customer" />
             </div>
 
             {/* PI row: PI No., PI date, PI amount, PI upload */}
@@ -749,6 +762,13 @@ export default function OutwardForm() {
               <div><label className={labelCls}>Contact person <span className="text-red-500">*</span></label><input required value={billToContactPerson} onChange={(e) => setBillToContactPerson(e.target.value)} placeholder="Enter contact person" className={inputCls} /></div>
               <div><label className={labelCls}>Contact no. <span className="text-red-500">*</span></label><input required type="tel" inputMode="numeric" maxLength={10} value={billToContactNo} onChange={(e) => setBillToContactNo(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter contact number" className={inputCls} /></div>
               <div><label className={labelCls}>Email</label><input type="email" value={billToEmail} onChange={(e) => setBillToEmail(e.target.value)} placeholder="Enter email" className={inputCls} /></div>
+            </div>
+
+            {/* Dispatch remarks - Sales' instructions for the warehouse */}
+            <h3 className="mt-6 mb-3 border-t border-gray-100 pt-5 text-sm font-semibold text-gray-900">Dispatch remarks</h3>
+            <div>
+              <label className={labelCls}>Dispatch Remarks</label>
+              <textarea rows={3} maxLength={1000} value={salesDispatchRemarks} onChange={(e) => setSalesDispatchRemarks(e.target.value)} placeholder="Packing / delivery instructions or any note for the warehouse team" className={`${inputCls} resize-none`} />
             </div>
           </section>
 
