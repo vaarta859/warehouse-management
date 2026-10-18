@@ -8,7 +8,6 @@ import {
   dispatchOutward,
   rejectOutward,
   downloadItemProof,
-  downloadPiFile,
   clearCurrentOutward,
   selectCurrentOutward,
   selectOutwardDetailStatus,
@@ -182,10 +181,6 @@ export default function OutwardDispatch() {
         refDocNumber: r.refDocNumber.trim(),
       }));
     if (!refs.length) return toast.error("Please enter at least one reference document number.");
-    // Bilty document is compulsory: already uploaded, or picked in this form.
-    const isBilty = (c) => /^bilty/i.test(String(c || "").trim());
-    const hasBilty = (outward.documents || []).some((d) => isBilty(d.docCategory)) || stagedDocs.some((d) => isBilty(d.docCategory));
-    if (!hasBilty) return toast.error("Please upload the Bilty document.");
     const fromTransport = isTransportSubmitted(outward);
     if (!fromTransport) {
       if (!dispatchMode) return toast.error("Please select the dispatch mode.");
@@ -261,12 +256,6 @@ export default function OutwardDispatch() {
   // Super admin also sees the sales side (PI details, payment status, UTR, proof, approval) and can update it.
   const showCost = superAdmin;
 
-  const handleViewPi = (mode = "view") => {
-    dispatch(downloadPiFile({ outwardId: id, mode })).then((result) => {
-      if (downloadPiFile.rejected.match(result)) toast.error(result.payload || "Unable to open the PI file.");
-    });
-  };
-
   const handleViewProof = (itemId) => {
     dispatch(downloadItemProof({ outwardId: id, itemId })).then((result) => {
       if (downloadItemProof.rejected.match(result)) toast.error(result.payload || "Unable to open the proof file.");
@@ -302,10 +291,9 @@ export default function OutwardDispatch() {
               <InfoField label="Customer / Recipient" value={outward.customerName} />
               <InfoField label="Company" value={outward.companyName || outward.warehouse?.company?.name} />
               <InfoField label="Outward type" value={outward.outwardType} />
-              <InfoField label="PI No." value={outward.piNumber} />
-              <InfoField label="PI date" value={outward.piDate ? new Date(outward.piDate).toLocaleDateString("en-IN") : "-"} />
-              <InfoField label="PI amount (inclusive GST)" value={outward.piAmount === null || outward.piAmount === undefined ? "-" : Number(outward.piAmount).toLocaleString("en-IN")} />
-              <InfoField label="PI file" value={outward.hasPiFile ? <span className="flex items-center gap-3"><button type="button" onClick={() => handleViewPi("view")} className="inline-flex items-center gap-1 text-blue-700 hover:underline"><Paperclip size={14} /> View</button><button type="button" onClick={() => handleViewPi("download")} className="text-blue-700 hover:underline">Download</button></span> : null} />
+              {showCost && <InfoField label="PI No." value={outward.piNumber} />}
+              {showCost && <InfoField label="PI date" value={outward.piDate ? new Date(outward.piDate).toLocaleDateString("en-IN") : "-"} />}
+              {showCost && <InfoField label="PI amount (inclusive GST)" value={outward.piAmount === null || outward.piAmount === undefined ? "-" : Number(outward.piAmount).toLocaleString("en-IN")} />}
               <InfoField label="Ship to - Contact person" value={outward.shipToContactPerson} />
               <InfoField label="Ship to - Contact no." value={outward.shipToContactNo} />
               <InfoField label="Ship to - Location" value={<LocationLink value={outward.shipToLocation} fallback={null} />} />
@@ -318,13 +306,6 @@ export default function OutwardDispatch() {
               {showCost && <InfoField label="Approved on" value={outward.approvedAt ? new Date(outward.approvedAt).toLocaleString("en-IN") : "-"} />}
               {showCost && outward.approvalRemarks && <InfoField label="Approval remarks" value={outward.approvalRemarks} />}
             </div>
-
-            {outward.dispatchRemarks && (
-            <div className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 sm:p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700 sm:text-sm">Dispatch Remarks (by Sales)</p>
-              <p className="mt-1 whitespace-pre-wrap break-words text-sm font-medium text-red-700 sm:text-base">{outward.dispatchRemarks}</p>
-            </div>
-          )}
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 md:p-6">
@@ -451,7 +432,7 @@ export default function OutwardDispatch() {
             outwardId={id}
             documents={(outward.documents || []).filter((d) => !isReceivingDocCategory(d.docCategory))}
             canManage
-            requiredDocuments={["Bilty"]}
+            requiredDocuments={[]}
             showSummary={false}
             optionalDocuments={documentSlots}
             addMenuTypes={[...REQUIRED_DOCUMENTS, "Bilty", "Return note", "Other"]}

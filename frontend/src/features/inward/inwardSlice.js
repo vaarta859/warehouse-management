@@ -50,7 +50,6 @@ const initialState = {
 // Thunks
 // -------------------------------------------------
 
-import { handleSignedUrl } from "../shared/fileActions";
 export const fetchInwardList = createAsyncThunk(
   "inward/fetchList",
   async (
@@ -164,11 +163,10 @@ export const uploadInwardDocument = createAsyncThunk(
 
 export const downloadInwardDocument = createAsyncThunk(
   "inward/downloadDocument",
-  async ({ documentId, mode = "download" }, { rejectWithValue }) => {
+  async ({ documentId }, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.get(
-        `/api/documents/${documentId}/download`,
-        { params: mode === "download" ? { download: 1 } : undefined }
+        `/api/documents/${documentId}/download`
       );
 
       const signedUrl = data.data?.url;
@@ -177,7 +175,7 @@ export const downloadInwardDocument = createAsyncThunk(
         throw new Error("Download URL was not generated.");
       }
 
-      handleSignedUrl(signedUrl, mode);
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
 
       return { documentId };
     } catch (err) {

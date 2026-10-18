@@ -20,7 +20,7 @@ export function downloadOutwardPdf(outward, items, documentRows, currentStatus, 
     ["Customer", outward.customerName || "-"],
     ["Company", outward.companyName || outward.warehouse?.company?.name || "-"],
     ["Outward Type", outward.outwardType || "-"],
-    ...(true
+    ...(includeCost
       ? [
           ["PI No.", outward.piNumber || "-"],
           ["PI Date", outward.piDate ? new Date(outward.piDate).toLocaleDateString("en-IN") : "-"],
@@ -31,7 +31,6 @@ export function downloadOutwardPdf(outward, items, documentRows, currentStatus, 
           ["Bill to - Contact Person", outward.billToContactPerson || "-"],
           ["Bill to - Contact No.", outward.billToContactNo || "-"],
           ["Bill to - Email", outward.billToEmail || "-"],
-          ["Dispatch Remarks (Sales)", outward.dispatchRemarks || "-"],
         ]
       : []),
     ...(includeDispatch

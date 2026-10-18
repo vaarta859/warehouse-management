@@ -46,8 +46,6 @@ export default function PartyNameField({
   placeholder = "Select or type a name",
   // Names shared from the server (e.g. every customer added in this warehouse), shown to everyone.
   sharedOptions = [],
-  // When given, a newly added name is saved on the server (for everyone) by this callback instead of in this browser's localStorage.
-  onAddOption,
 }) {
   const [localOptions, setOptions] = useState(() => readStoredOptions(storageKey, defaultOptions));
   const options = useMemo(() => {
@@ -100,8 +98,7 @@ export default function PartyNameField({
     if (!exactMatch) {
       const next = [...localOptions, typed];
       setOptions(next);
-      if (onAddOption) onAddOption(typed);
-      else persist(next);
+      persist(next);
     }
     onChange(typed);
     setOpen(false);

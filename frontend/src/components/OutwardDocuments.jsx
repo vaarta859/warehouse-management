@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Download, Eye, Trash2, Upload, FileText, Loader2, Plus, RefreshCw } from "lucide-react";
+import { Download, Trash2, Upload, FileText, Loader2, Plus, RefreshCw } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import { toast, promptName } from "./CenterMessage";
 import {
@@ -157,9 +157,9 @@ export default function OutwardDocuments({
     handleUpload(event, category);
   };
 
-  const handleDownload = (documentId, mode = "download") => {
+  const handleDownload = (documentId) => {
     if (!documentId) return toast.error("Document ID is missing.");
-    dispatch(downloadOutwardDocument({ documentId, mode })).then((result) => {
+    dispatch(downloadOutwardDocument({ documentId })).then((result) => {
       if (downloadOutwardDocument.rejected.match(result)) {
         toast.error(result.payload?.message || "Unable to download file.");
       }
@@ -318,18 +318,7 @@ export default function OutwardDocuments({
                     <>
                       <button
                         type="button"
-                        onClick={() => handleDownload(document.id, "view")}
-                        disabled={busy}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border hover:bg-gray-50 disabled:opacity-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-sm"
-                        title="View"
-                      >
-                        <Eye size={16} />
-                        <span className="hidden sm:inline">View</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDownload(document.id, "download")}
+                        onClick={() => handleDownload(document.id)}
                         disabled={busy}
                         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border hover:bg-gray-50 disabled:opacity-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-sm"
                         title="Download"

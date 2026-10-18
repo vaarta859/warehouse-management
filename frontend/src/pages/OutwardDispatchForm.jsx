@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronDown, Download, Eye, FileText, Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ChevronDown, Download, FileText, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { toast, promptName } from "../components/CenterMessage";
@@ -108,8 +108,8 @@ export default function OutwardDispatchForm() {
     });
   };
 
-  const handleDownload = (documentId, mode = "download") =>
-    dispatch(downloadOutwardDocument({ documentId, mode })).then((r) => {
+  const handleDownload = (documentId) =>
+    dispatch(downloadOutwardDocument({ documentId })).then((r) => {
       if (downloadOutwardDocument.rejected.match(r)) toast.error(r.payload?.message || "Unable to download file.");
     });
 
@@ -300,8 +300,7 @@ export default function OutwardDispatchForm() {
                       </label>
                       {document && (
                         <>
-                          <button type="button" title="View" disabled={downloading} onClick={() => handleDownload(document.id, "view")} className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-gray-500 hover:bg-gray-50 disabled:opacity-50"><Eye size={16} /></button>
-                          <button type="button" title="Download" disabled={downloading} onClick={() => handleDownload(document.id, "download")} className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-gray-500 hover:bg-gray-50 disabled:opacity-50"><Download size={16} /></button>
+                          <button type="button" title="Download" disabled={downloading} onClick={() => handleDownload(document.id)} className="flex h-10 items-center rounded-lg border border-gray-200 px-3 text-gray-500 hover:bg-gray-50 disabled:opacity-50"><Download size={16} /></button>
                           <button type="button" title="Delete" disabled={deleting} onClick={() => handleDelete(document.id)} className="flex h-10 items-center rounded-lg border border-red-200 px-3 text-red-500 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} /></button>
                         </>
                       )}

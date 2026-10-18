@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
+import loginBg from "../assets/login-bg.svg";
 import {
   loginUser,
   selectAuthStatus,
@@ -52,8 +53,11 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-8">
+    <div
+      className="min-h-dvh flex items-center justify-center bg-slate-900 bg-cover bg-center bg-no-repeat px-4"
+      style={{ backgroundImage: `url(${loginBg})` }}
+    >
+      <div className="w-full max-w-sm bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl border border-white/40 p-5 sm:p-8">
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center mb-3">
             <span className="text-white text-2xl font-bold">IT</span>
@@ -88,7 +92,7 @@ export default function Login() {
             )}
           </div>
 
-          <div className="mb-2">
+          <div className="mb-5">
             <label htmlFor="password" className="block text-sm font-semibold text-black mb-1">
               Password
             </label>
@@ -117,12 +121,6 @@ export default function Login() {
             )}
           </div>
 
-          <div className="text-right mb-5">
-            <a href="#" className="text-xs text-blue-600 hover:underline">
-              Forgot password?
-            </a>
-          </div>
-
           <button
             type="submit"
             disabled={loading}
@@ -132,15 +130,6 @@ export default function Login() {
           </button>
         </form>
 
-        <p className="text-center text-xs text-gray-500 mt-5">
-          Access is role-based — Admin, Sales, Account or Warehouse Manager
-        </p>
-        <p className="text-center text-sm mt-2">
-          Don't have an account?{" "}
-          <Link to="/signup" className="text-blue-600 hover:underline">
-            Sign up
-          </Link>
-        </p>
       </div>
     </div>
   );

@@ -142,8 +142,8 @@ export default function OutwardDetail() {
     });
   };
 
-  const handleViewPi = (mode = "view") => {
-    dispatch(downloadPiFile({ outwardId: id, mode })).then((result) => {
+  const handleViewPi = () => {
+    dispatch(downloadPiFile({ outwardId: id })).then((result) => {
       if (downloadPiFile.rejected.match(result)) toast.error(result.payload || "Unable to open the PI file.");
     });
   };
@@ -345,7 +345,7 @@ export default function OutwardDetail() {
             <Info icon={<User size={18} />} label="Customer" value={outward.customerName || "-"} />
             <Info icon={<User size={18} />} label="Company" value={outward.companyName || outward.warehouse?.company?.name || "-"} />
             <Info icon={<Truck size={18} />} label="Outward Type" value={outward.outwardType || "-"} />
-            {(
+            {showCost && (
               <>
                 <Info icon={<Hash size={18} />} label="PI No." value={outward.piNumber || "-"} />
                 <Info icon={<Calendar size={18} />} label="PI Date" value={outward.piDate ? new Date(outward.piDate).toLocaleDateString("en-IN") : "-"} />
@@ -353,7 +353,7 @@ export default function OutwardDetail() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1 sm:gap-2 sm:text-sm"><Paperclip size={18} />PI File</div>
                   {outward.hasPiFile ? (
-                    <span className="flex items-center gap-3"><button type="button" onClick={() => handleViewPi("view")} className="text-sm font-medium text-blue-700 hover:underline sm:text-base">View</button><button type="button" onClick={() => handleViewPi("download")} className="text-sm font-medium text-blue-700 hover:underline sm:text-base">Download</button></span>
+                    <button type="button" onClick={handleViewPi} className="text-sm font-medium text-blue-700 hover:underline sm:text-base">View file</button>
                   ) : (
                     <div className="text-sm font-medium text-gray-900 sm:text-base">-</div>
                   )}
@@ -420,13 +420,6 @@ export default function OutwardDetail() {
               </table>
             </div>
           </div>
-          )}
-
-          {outward.dispatchRemarks && (
-            <div className="mt-5 rounded-lg border border-red-300 bg-red-50 p-3 sm:p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700 sm:text-sm">Dispatch Remarks (by Sales)</p>
-              <p className="mt-1 whitespace-pre-wrap break-words text-sm font-medium text-red-700 sm:text-base">{outward.dispatchRemarks}</p>
-            </div>
           )}
         </div>
 
