@@ -522,14 +522,19 @@ export default function Inward() {
     dispatch(fetchInwardList(queryParams));
   }, [dispatch, queryParams, waitingForWarehouse]);
 
+  // Activity history date range (set by the date filter inside the history panel; starts as "Today").
+  const [historyRange, setHistoryRange] = useState(null);
   useEffect(() => {
-    if (waitingForWarehouse) return;
+    if (waitingForWarehouse || !historyRange) return;
     dispatch(
       fetchInwardHistory({
         warehouseId: scopedWarehouseId,
+        from: historyRange.from,
+        to: historyRange.to,
+        pageSize: 100,
       })
     );
-  }, [dispatch, scopedWarehouseId, waitingForWarehouse]);
+  }, [dispatch, scopedWarehouseId, waitingForWarehouse, historyRange]);
 
   const inwardData = useMemo(
     () => rawList.map(formatGrn),
@@ -605,6 +610,7 @@ export default function Inward() {
             <HistoryPanel
               entries={history}
               status={historyStatus}
+              onRangeChange={setHistoryRange}
             />
 
             {["SALES", "ACCOUNT"].includes(currentUser?.role) ? null : warehousePermissions.canInward ? (

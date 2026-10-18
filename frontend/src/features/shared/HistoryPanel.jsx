@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { History as HistoryIcon, Loader2, X } from "lucide-react";
+import { CalendarDays, History as HistoryIcon, Loader2, X } from "lucide-react";
 import { formatDateTime } from "./formatters";
 
 // Small badge shown per entry - color-coded by action so the panel
@@ -77,6 +77,34 @@ function BeforeAfter({ changes }) {
   );
 }
 
+// Local-day boundaries (the server may be in another time zone) as ISO timestamps.
+const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+const dayEnd = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+const toInputValue = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const fromInputValue = (v) => {
+  const [y, m, d] = String(v).split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
+function rangeFor(preset, customFrom, customTo) {
+  const now = new Date();
+  if (preset === "yesterday") {
+    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    return { from: dayStart(y).toISOString(), to: dayEnd(y).toISOString() };
+  }
+  if (preset === "custom") {
+    // A single date is enough: "to" falls back to "from" (and the other way round).
+    const f = customFrom || customTo;
+    const t = customTo || customFrom;
+    if (!f) return { from: dayStart(now).toISOString(), to: dayEnd(now).toISOString() };
+    const a = fromInputValue(f);
+    const b = fromInputValue(t);
+    const [start, end] = a <= b ? [a, b] : [b, a];
+    return { from: dayStart(start).toISOString(), to: dayEnd(end).toISOString() };
+  }
+  return { from: dayStart(now).toISOString(), to: dayEnd(now).toISOString() };
+}
+
 /**
  * Activity history panel: a clock-icon button that opens a dropdown
  * listing the audit trail across ALL inward/outward entries the user
@@ -87,8 +115,19 @@ function BeforeAfter({ changes }) {
  * Used identically by InwardList and OutwardList - both just pass the
  * feed their slice already fetched.
  */
-export default function HistoryPanel({ entries = [], status = "idle" }) {
+export default function HistoryPanel({ entries = [], status = "idle", onRangeChange }) {
   const [open, setOpen] = useState(false);
+  // Date filter: Today (default) / Yesterday / a date or date range picked from the calendar.
+  const [preset, setPreset] = useState("today");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  useEffect(() => {
+    if (onRangeChange) onRangeChange(rangeFor(preset, customFrom, customTo));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, customFrom, customTo]);
+
+  const today = toInputValue(new Date());
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -125,7 +164,63 @@ export default function HistoryPanel({ entries = [], status = "idle" }) {
             </button>
           </div>
 
-          <div className="max-h-[calc(100dvh-11rem)] overflow-y-auto sm:max-h-[28rem]">
+          {/* Date filter */}
+          <div className="border-b bg-gray-50 px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                ["today", "Today"],
+                ["yesterday", "Yesterday"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPreset(key)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                    preset === key ? "border-blue-600 bg-blue-600 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPreset("custom")}
+                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium ${
+                  preset === "custom" ? "border-blue-600 bg-blue-600 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <CalendarDays size={12} /> Pick date
+              </button>
+            </div>
+
+            {preset === "custom" && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="text-[11px] font-medium text-gray-500">
+                  From
+                  <input
+                    type="date"
+                    value={customFrom}
+                    max={customTo || today}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="mt-0.5 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="text-[11px] font-medium text-gray-500">
+                  To
+                  <input
+                    type="date"
+                    value={customTo}
+                    min={customFrom || undefined}
+                    max={today}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="mt-0.5 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="max-h-[calc(100dvh-16rem)] overflow-y-auto sm:max-h-[26rem]">
             {loading && (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
                 <Loader2 size={16} className="animate-spin" />
@@ -134,7 +229,7 @@ export default function HistoryPanel({ entries = [], status = "idle" }) {
             )}
 
             {!loading && entries.length === 0 && (
-              <div className="py-8 text-center text-sm text-gray-500">No activity recorded yet.</div>
+              <div className="py-8 text-center text-sm text-gray-500">No activity recorded for this date.</div>
             )}
 
             {!loading && entries.length > 0 && (

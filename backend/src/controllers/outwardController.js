@@ -1694,9 +1694,20 @@ export async function downloadPiFile(req, res) {
 // ---------------------------------------------------------------------------
 // HISTORY
 // ---------------------------------------------------------------------------
+// Optional ?from= / ?to= (ISO timestamps) -> createdAt filter for the history feed. The browser sends its own
+// local day boundaries, so "today" / "yesterday" are correct for the user's time zone.
+function historyDateFilter(from, to) {
+  const range = {};
+  const f = from ? new Date(from) : null;
+  const t = to ? new Date(to) : null;
+  if (f && !Number.isNaN(f.getTime())) range.gte = f;
+  if (t && !Number.isNaN(t.getTime())) range.lte = t;
+  return Object.keys(range).length ? { createdAt: range } : {};
+}
+
 export async function listOutwardHistory(req, res) {
   try {
-    const { warehouseId, search = "", page = "1", pageSize = "20" } = req.query;
+    const { warehouseId, search = "", page = "1", pageSize = "20", from, to } = req.query;
     const scopedWarehouseIds = await getScopedWarehouseIds(req);
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
@@ -1723,6 +1734,7 @@ export async function listOutwardHistory(req, res) {
         entityFilter,
         isWarehouse ? { action: { notIn: HIDDEN_FROM_WAREHOUSE_ACTIONS } } : {},
         search ? { entityNumber: { contains: search, mode: "insensitive" } } : {},
+        historyDateFilter(from, to),
       ],
     };
 

@@ -1332,6 +1332,17 @@ export async function createInwardCompany(req, res) {
  * =========================================================
  */
  
+// Optional ?from= / ?to= (ISO timestamps) -> createdAt filter for the history feed. The browser sends its own
+// local day boundaries, so "today" / "yesterday" are correct for the user's time zone.
+function historyDateFilter(from, to) {
+  const range = {};
+  const f = from ? new Date(from) : null;
+  const t = to ? new Date(to) : null;
+  if (f && !Number.isNaN(f.getTime())) range.gte = f;
+  if (t && !Number.isNaN(t.getTime())) range.lte = t;
+  return Object.keys(range).length ? { createdAt: range } : {};
+}
+
 export async function listGrnHistory(req, res) {
   try {
     const {
@@ -1339,6 +1350,8 @@ export async function listGrnHistory(req, res) {
       search = "",
       page = "1",
       pageSize = "20",
+      from,
+      to,
     } = req.query;
  
     let scopedWarehouseIds = null;
@@ -1362,6 +1375,7 @@ export async function listGrnHistory(req, res) {
         scopedWarehouseIds ? { warehouseId: { in: scopedWarehouseIds } } : {},
         warehouseId ? { warehouseId } : {},
         search ? { entityNumber: { contains: search, mode: "insensitive" } } : {},
+        historyDateFilter(from, to),
       ],
     };
  

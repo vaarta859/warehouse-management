@@ -469,10 +469,10 @@ export const deleteOutwardDocument = createAsyncThunk(
 
 export const fetchOutwardHistory = createAsyncThunk(
   "outward/fetchHistory",
-  async ({ warehouseId, search } = {}, { rejectWithValue }) => {
+  async ({ warehouseId, search, from, to, pageSize } = {}, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.get(`/api/outward/history`, {
-        params: { warehouseId, search },
+        params: { warehouseId, search, from, to, pageSize },
       });
       return Array.isArray(data) ? data : data.data || [];
     } catch (err) {

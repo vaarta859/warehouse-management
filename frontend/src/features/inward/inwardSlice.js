@@ -258,10 +258,10 @@ export const createInwardCompany = createAsyncThunk(
 
 export const fetchInwardHistory = createAsyncThunk(
   "inward/fetchHistory",
-  async ({ warehouseId, search } = {}, { rejectWithValue }) => {
+  async ({ warehouseId, search, from, to, pageSize } = {}, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.get(`/api/grn/history`, {
-        params: { warehouseId, search },
+        params: { warehouseId, search, from, to, pageSize },
       });
       return Array.isArray(data) ? data : data.data || [];
     } catch (err) {

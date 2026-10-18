@@ -41,4 +41,23 @@ const startServer = async () => {
   }
 };
 
+// Close the database connections before the process ends. Without this, every nodemon restart (or Ctrl+C) leaves
+// its ~9 connections open on the Supabase pooler until they time out, and a few quick restarts use up the pooler's
+// limit -> "Timed out fetching a new connection from the connection pool" (P2024).
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await prisma.$disconnect();
+  } catch {
+    // nothing else to do - the process is ending anyway
+  }
+  // nodemon sends SIGUSR2 and expects the process to end by itself so it can start the new one.
+  if (signal === "SIGUSR2") process.kill(process.pid, "SIGUSR2");
+  else process.exit(0);
+}
+["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => shutdown(sig)));
+process.once("SIGUSR2", () => shutdown("SIGUSR2"));
+
 startServer();

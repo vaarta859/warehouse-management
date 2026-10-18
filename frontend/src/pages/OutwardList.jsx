@@ -376,10 +376,12 @@ export default function Outward() {
     dispatch(fetchOutwardList(queryParams));
   }, [dispatch, queryParams, waitingForWarehouse]);
 
+  // Activity history date range (set by the date filter inside the history panel; starts as "Today").
+  const [historyRange, setHistoryRange] = useState(null);
   useEffect(() => {
-    if (waitingForWarehouse) return;
-    dispatch(fetchOutwardHistory({ warehouseId: scopedWarehouseId }));
-  }, [dispatch, scopedWarehouseId, waitingForWarehouse]);
+    if (waitingForWarehouse || !historyRange) return;
+    dispatch(fetchOutwardHistory({ warehouseId: scopedWarehouseId, from: historyRange.from, to: historyRange.to, pageSize: 100 }));
+  }, [dispatch, scopedWarehouseId, waitingForWarehouse, historyRange]);
 
   const outwardData = useMemo(() => rawList.map(formatOutwardEntry), [rawList]);
 
@@ -437,7 +439,7 @@ export default function Outward() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <HistoryPanel entries={history} status={historyStatus} />
+            <HistoryPanel entries={history} status={historyStatus} onRangeChange={setHistoryRange} />
 
             {!canCreate ? null : (
               <Link
