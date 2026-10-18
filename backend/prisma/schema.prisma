@@ -110,6 +110,9 @@ model User {
   role         Role
   createdAt    DateTime @default(now())
 
+  // Active users can log in; inactive users are blocked from logging in.
+  isActive Boolean @default(true)
+
   // Primary company. Always one of the companies in `companies` below.
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])

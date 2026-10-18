@@ -31,6 +31,15 @@ export default async function authenticate(req, res, next) {
       return res.status(401).json({ message: 'User no longer exists' });
     }
 
+    // Deactivated by a Super Admin after this token was issued - lock them out.
+    // 401 makes the frontend clear the session and return to the login page.
+    if (user.isActive === false) {
+      return res.status(401).json({
+        message: 'Your account has been deactivated. You are unable to login. Please contact your administrator.',
+        code: 'ACCOUNT_INACTIVE',
+      });
+    }
+
     req.user = user;
     next();
   } catch (err) {

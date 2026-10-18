@@ -10,8 +10,8 @@ export default function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    setUnauthorizedHandler(() => {
-      dispatch(sessionExpired());
+    setUnauthorizedHandler((message) => {
+      dispatch(sessionExpired(message));
       navigate("/", { replace: true });
     });
   }, [dispatch, navigate]);

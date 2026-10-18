@@ -25,7 +25,7 @@ const cache = new Map(); // userId -> { user, expires }
 const pending = new Map(); // userId -> Promise (lookup already in flight)
 let generation = 0; // bumped on every invalidation
 
-const USER_SELECT = { id: true, name: true, email: true, role: true, companyId: true };
+const USER_SELECT = { id: true, name: true, email: true, role: true, companyId: true, isActive: true };
 
 /** Returns the user (or null if they no longer exist). Never returns a shared object. */
 export async function getAuthUser(userId) {

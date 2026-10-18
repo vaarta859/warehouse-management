@@ -33,7 +33,13 @@ apiClient.interceptors.response.use(
       localStorage.removeItem("user");
 
       if (onUnauthorized) {
-        onUnauthorized();
+        // Pass the server message along when an admin has deactivated this
+        // account mid-session, so the login page can explain why.
+        onUnauthorized(
+          error.response?.data?.code === "ACCOUNT_INACTIVE"
+            ? error.response.data.message
+            : undefined
+        );
       }
     }
 

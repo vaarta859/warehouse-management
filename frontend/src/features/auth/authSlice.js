@@ -134,6 +134,23 @@ export const updateUser = createAsyncThunk(
   }
 );
 
+// PATCH /api/users/:id/status — Active / Inactive (inactive users can't log in)
+export const setUserStatus = createAsyncThunk(
+  "auth/setUserStatus",
+  async ({ id, isActive }, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.patch(`/api/users/${id}/status`, {
+        isActive,
+      });
+      return data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to update user status"
+      );
+    }
+  }
+);
+
 // DELETE /api/users/:id
 export const deleteUser = createAsyncThunk(
   "auth/deleteUser",
@@ -171,11 +188,13 @@ const authSlice = createSlice({
       localStorage.removeItem("token");
       localStorage.removeItem("user");
     },
-    sessionExpired: (state) => {
+    sessionExpired: (state, action) => {
       state.user = null;
       state.users = [];
       state.token = null;
       state.status = "idle";
+      // e.g. "Your account has been deactivated..." shown on the login page
+      state.error = typeof action.payload === "string" ? action.payload : null;
       localStorage.removeItem("token");
       localStorage.removeItem("user");
     },
@@ -272,6 +291,15 @@ const authSlice = createSlice({
       })
       .addCase(updateUser.rejected, (state, action) => {
         state.usersError = action.payload || "Failed to update user";
+      })
+      .addCase(setUserStatus.fulfilled, (state, action) => {
+        const updatedUser = action.payload?.user;
+        if (!updatedUser?.id) return;
+        const index = state.users.findIndex((user) => user.id === updatedUser.id);
+        if (index !== -1) state.users[index] = { ...state.users[index], isActive: updatedUser.isActive };
+      })
+      .addCase(setUserStatus.rejected, (state, action) => {
+        state.usersError = action.payload || "Failed to update user status";
       })
       .addCase(deleteUser.fulfilled, (state, action) => {
         state.users = state.users.filter((user) => user.id !== action.payload);

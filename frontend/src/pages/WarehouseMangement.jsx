@@ -441,31 +441,31 @@ export default function WarehouseManagement() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="mobile-cards min-w-full divide-y divide-gray-200 text-sm">
+          <table className="mobile-cards w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                <th className="px-3 py-3 text-left font-medium text-gray-500">
                   Warehouse
                 </th>
 
-                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                <th className="px-3 py-3 text-left font-medium text-gray-500">
                   Location
                 </th>
 
-                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                <th className="px-3 py-3 text-left font-medium text-gray-500">
                   Company
                 </th>
 
-                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                <th className="px-3 py-3 text-left font-medium text-gray-500">
                   Inward
                 </th>
 
-                <th className="px-4 py-3 text-left font-medium text-gray-500">
+                <th className="px-3 py-3 text-left font-medium text-gray-500">
                   Outward
                 </th>
 
                 {canManage && (
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">
+                  <th className="px-3 py-3 text-right font-medium text-gray-500">
                     Actions
                   </th>
                 )}
@@ -506,7 +506,7 @@ export default function WarehouseManagement() {
                         : "hover:bg-gray-50"
                     }
                   >
-                    <td className="px-4 py-3">
+                    <td data-label="Warehouse" className="px-3 py-3 md:min-w-[200px]">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="h-9 w-9 shrink-0 rounded-lg bg-green-50 text-green-700 flex items-center justify-center">
                           <Warehouse size={17} />
@@ -524,8 +524,8 @@ export default function WarehouseManagement() {
                       </div>
                     </td>
 
-                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                      <span className="flex items-center gap-1">
+                    <td data-label="Location" className="mc-stack px-3 py-3 text-gray-600 md:min-w-[200px]">
+                      <span className="flex items-start gap-1">
                         <MapPin
                           size={12}
                           className="shrink-0 text-gray-400"
@@ -541,8 +541,8 @@ export default function WarehouseManagement() {
                       </span>
                     </td>
 
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
+                    <td data-label="Company" className="px-3 py-3">
+                      <div className="flex items-center justify-end gap-1.5 md:justify-start">
                         <Building2
                           size={13}
                           className="text-gray-400 shrink-0"
@@ -561,7 +561,7 @@ export default function WarehouseManagement() {
                       </div>
                     </td>
 
-                    <td className="px-4 py-3">
+                    <td data-label="Inward" className="px-3 py-3">
                       <StatusToggle
                         active={effectiveInward}
                         disabled={
@@ -574,7 +574,7 @@ export default function WarehouseManagement() {
                       />
                     </td>
 
-                    <td className="px-4 py-3">
+                    <td data-label="Outward" className="px-3 py-3">
                       <StatusToggle
                         active={effectiveOutward}
                         disabled={
@@ -588,17 +588,17 @@ export default function WarehouseManagement() {
                     </td>
 
                     {canManage && (
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
+                      <td data-label="Actions" className="px-3 py-3 md:whitespace-nowrap md:w-px">
+                        <div className="flex justify-end gap-1.5">
                           <button
                             onClick={() =>
                               openAccess(w)
                             }
-                            className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-blue-200 px-2.5 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50"
                           >
                             <Users
                               size={14}
-                              className="inline mr-1"
+                              className="shrink-0"
                             />
                             Access
                           </button>
@@ -607,11 +607,11 @@ export default function WarehouseManagement() {
                             onClick={() =>
                               openEdit(w)
                             }
-                            className="rounded-lg border px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
                           >
                             <Pencil
                               size={14}
-                              className="inline mr-1"
+                              className="shrink-0"
                             />
                             Edit
                           </button>
@@ -620,11 +620,11 @@ export default function WarehouseManagement() {
                             onClick={() =>
                               remove(w)
                             }
-                            className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-red-200 px-2.5 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
                           >
                             <Trash2
                               size={14}
-                              className="inline mr-1"
+                              className="shrink-0"
                             />
                             Delete
                           </button>
@@ -1057,11 +1057,11 @@ function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/40 p-0 sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl"
+        className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-h-[90vh] sm:rounded-xl"
         onClick={(e) =>
           e.stopPropagation()
         }

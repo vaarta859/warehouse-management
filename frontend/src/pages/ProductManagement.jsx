@@ -187,7 +187,7 @@ export default function ProductManagement() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4 mb-5 sm:mb-6">
         <Stat icon={Package} label="Total items" value={products.length} />
         <Stat icon={Layers} label="Categories" value={categories.length} />
       </div>
@@ -235,15 +235,17 @@ export default function ProductManagement() {
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((product) => (
                   <tr key={product.id}>
-                    <td className="px-5 py-3.5 text-sm text-gray-700">
-                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                    <td data-label="Category" className="px-5 py-3.5 text-sm text-gray-700">
+                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
                         {product.category}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-sm font-medium text-gray-900">
-                      {product.sku}
+                    <td data-label="SKU / Module" className="sku-cell px-5 py-3.5 text-sm font-medium">
+                      <span className="inline-block max-w-full break-words rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-[13px] font-semibold text-emerald-800">
+                        {product.sku}
+                      </span>
                     </td>
-                    <td className="px-5 py-3.5">
+                    <td data-label="Actions" className="px-5 py-3.5">
                       <div className="flex justify-end gap-1.5">
                         <button
                           onClick={() => openEdit(product)}
@@ -270,11 +272,11 @@ export default function ProductManagement() {
       {/* Add / Edit */}
       {showForm && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/40 p-0 sm:items-center sm:p-4"
           onClick={close}
         >
           <div
-            className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl"
+            className="w-full max-w-md max-h-[92dvh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-h-[90vh] sm:rounded-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b px-5 py-4">
@@ -385,13 +387,13 @@ export default function ProductManagement() {
 
 function Stat({ icon: Icon, label, value }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{label}</p>
-          <p className="text-2xl font-semibold text-gray-900 mt-1">{value}</p>
+    <div className="rounded-xl border border-gray-200 bg-white p-3 sm:p-5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] leading-tight text-gray-500 sm:text-sm">{label}</p>
+          <p className="text-xl font-semibold text-gray-900 mt-1 sm:text-2xl">{value}</p>
         </div>
-        <div className="h-10 w-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+        <div className="hidden h-10 w-10 shrink-0 rounded-lg bg-blue-50 text-blue-600 items-center justify-center sm:flex">
           <Icon size={20} />
         </div>
       </div>

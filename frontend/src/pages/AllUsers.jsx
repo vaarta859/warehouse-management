@@ -7,6 +7,7 @@ import {
   EyeOff,
   Loader2,
   Pencil,
+  Power,
   Search,
   ShieldCheck,
   Trash2,
@@ -18,6 +19,7 @@ import {
   deleteUser,
   updateUserRole,
   updateUser,
+  setUserStatus,
   selectAllUsers,
   selectUsersStatus,
   selectUsersError,
@@ -65,6 +67,7 @@ export default function AllUsers() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [selected, setSelected] = useState(null);
+  const [expandedCompanies, setExpandedCompanies] = useState({});
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [role, setRole] = useState("");
@@ -156,6 +159,21 @@ export default function AllUsers() {
     close();
   };
 
+  const toggleStatus = async (user) => {
+    if (user.id === currentUser?.id)
+      return alert("You can't deactivate your own account.");
+    const makeActive = user.isActive === false;
+    const message = makeActive
+      ? `Activate ${user.name}? They will be able to log in again.`
+      : `Deactivate ${user.name}? They will no longer be able to log in.`;
+    if (!window.confirm(message)) return;
+    const result = await dispatch(
+      setUserStatus({ id: user.id, isActive: makeActive }),
+    );
+    if (setUserStatus.rejected.match(result))
+      alert(result.payload || "Failed to update user status");
+  };
+
   const remove = async (user) => {
     if (user.id === currentUser?.id)
       return alert("You can't delete your own account.");
@@ -202,7 +220,7 @@ export default function AllUsers() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 mb-5">
         <Stat label="Total" value={users.length} />
         <Stat
           label="Warehouse Manager"
@@ -261,48 +279,68 @@ export default function AllUsers() {
                   key={user.id}
                   className="border-b last:border-0 hover:bg-gray-50/70"
                 >
-                  <td className="px-4 py-4">
+                  <td data-label="User" className="px-4 py-4">
                     <div className="font-medium text-gray-900">{user.name}</div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       {user.email}
                     </div>
+                    <span
+                      className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        user.isActive === false
+                          ? "bg-red-50 text-red-700"
+                          : "bg-green-50 text-green-700"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          user.isActive === false ? "bg-red-500" : "bg-green-500"
+                        }`}
+                      />
+                      {user.isActive === false ? "Inactive" : "Active"}
+                    </span>
                   </td>
-                  <td className="px-4 py-4">
+                  <td data-label="Role" className="px-4 py-4">
                     <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                       <ShieldCheck size={13} /> {roleLabel(user.role)}
                     </span>
                   </td>
-                  <td className="px-4 py-4">
+                  <td data-label="Companies" className="mc-stack px-4 py-4">
                     {userCompanies(user).length ? (
                       <div className="flex flex-wrap gap-1.5">
-                        {userCompanies(user)
-                          .slice(0, 2)
-                          .map((c) => (
-                            <span
-                              key={c.id}
-                              title={c.code || ""}
-                              className="max-w-[160px] truncate rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700"
-                            >
-                              {c.name}
-                            </span>
-                          ))}
-                        {userCompanies(user).length > 2 && (
+                        {(expandedCompanies[user.id]
+                          ? userCompanies(user)
+                          : userCompanies(user).slice(0, 2)
+                        ).map((c) => (
                           <span
-                            title={userCompanies(user)
-                              .slice(2)
-                              .map((c) => c.name)
-                              .join(", ")}
-                            className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700"
+                            key={c.id}
+                            title={c.code || ""}
+                            className="max-w-full truncate rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700"
                           >
-                            +{userCompanies(user).length - 2} more
+                            {c.name}
                           </span>
+                        ))}
+                        {userCompanies(user).length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedCompanies((prev) => ({
+                                ...prev,
+                                [user.id]: !prev[user.id],
+                              }))
+                            }
+                            className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                          >
+                            {expandedCompanies[user.id]
+                              ? "Show less"
+                              : `+${userCompanies(user).length - 2} more`}
+                          </button>
                         )}
                       </div>
                     ) : (
                       <div className="text-gray-800">Unassigned</div>
                     )}
                   </td>
-                  <td className="px-4 py-4">
+                  <td data-label="Warehouses" className="mc-stack px-4 py-4">
                     <div className="text-gray-800">
                       {user.warehouseAccess?.length || 0} granted
                     </div>
@@ -319,7 +357,7 @@ export default function AllUsers() {
                       outward
                     </div>
                   </td>
-                  <td className="px-4 py-4">
+                  <td data-label="Actions" className="px-4 py-4">
                     <div className="flex justify-end gap-1">
                       <button
                         onClick={() => openEdit(user)}
@@ -334,6 +372,25 @@ export default function AllUsers() {
                         className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"
                       >
                         <Eye size={16} />
+                      </button>
+                      <button
+                        onClick={() => toggleStatus(user)}
+                        title={
+                          user.isActive === false
+                            ? "Activate user"
+                            : "Deactivate user"
+                        }
+                        disabled={user.id === currentUser?.id}
+                        className={`inline-flex items-center gap-1 rounded-lg p-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+                          user.isActive === false
+                            ? "text-green-700 hover:bg-green-50"
+                            : "text-amber-600 hover:bg-amber-50"
+                        }`}
+                      >
+                        <Power size={16} />
+                        <span>
+                          {user.isActive === false ? "Activate" : "Deactivate"}
+                        </span>
                       </button>
                       <button
                         onClick={() => remove(user)}
@@ -358,11 +415,11 @@ export default function AllUsers() {
 
       {selected && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/40 p-0 sm:items-center sm:p-4"
           onClick={close}
         >
           <div
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl"
+            className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-h-[90vh] sm:rounded-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b px-5 py-4">
@@ -448,7 +505,7 @@ export default function AllUsers() {
               </form>
             ) : (
               <div className="p-5">
-                <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
                   <Info label="Role" value={roleLabel(selected.role)} />
                   <Info
                     label={userCompanies(selected).length > 1 ? "Companies" : "Company"}

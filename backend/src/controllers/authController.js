@@ -279,6 +279,7 @@ export async function login(req, res) {
         email: true,
         role: true,
         companyId: true,
+        isActive: true,
         companies: USER_COMPANIES_SELECT,
         passwordHash: true,
         warehouseAccess: {
@@ -315,6 +316,20 @@ export async function login(req, res) {
     if (!passwordMatches) {
       return res.status(401).json({
         message: "Invalid email or password",
+      });
+    }
+
+    // ---------------------------------------------
+    // Inactive accounts cannot sign in
+    // (checked after the password so we don't reveal account status
+    // to someone who doesn't know the credentials)
+    // ---------------------------------------------
+
+    if (!user.isActive) {
+      return res.status(403).json({
+        message:
+          "Your account is inactive. You are unable to login. Please contact your administrator.",
+        code: "ACCOUNT_INACTIVE",
       });
     }
 
@@ -517,6 +532,7 @@ export async function updateUserRole(req, res) {
           email: true,
           role: true,
           companyId: true,
+          isActive: true,
           companies: USER_COMPANIES_SELECT,
           warehouseAccess: {
             select: {
@@ -661,6 +677,7 @@ export async function updateUser(req, res) {
         email: true,
         role: true,
         companyId: true,
+        isActive: true,
         createdAt: true,
       },
     });
@@ -714,6 +731,7 @@ export async function listUsers(req, res) {
         email: true,
         role: true,
         companyId: true,
+        isActive: true,
         createdAt: true,
         company: {
           select: { id: true, name: true, code: true },
@@ -799,6 +817,74 @@ export async function getUserWarehouses(req, res) {
 
     return res.status(500).json({
       message: "Something went wrong while fetching the user's warehouses",
+    });
+  }
+}
+
+// =====================================================
+// PATCH /api/users/:id/status
+// Protected + SUPER_ADMIN
+//
+// body: { isActive: true | false }
+//
+// An inactive user cannot log in, and any session they already
+// have stops working on their next request.
+// =====================================================
+
+export async function setUserStatus(req, res) {
+  try {
+    const { isActive } = req.body;
+
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({
+        message: "isActive must be true or false",
+      });
+    }
+
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({
+        message: "You can't deactivate your own account",
+      });
+    }
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { isActive },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        companyId: true,
+        isActive: true,
+      },
+    });
+
+    // Make the change apply immediately on this server
+    invalidateCachedUser(req.params.id);
+
+    return res.json({
+      message: isActive
+        ? "User activated successfully"
+        : "User deactivated successfully",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("Set user status error:", error);
+
+    return res.status(500).json({
+      message: "Something went wrong while updating the user status",
     });
   }
 }
