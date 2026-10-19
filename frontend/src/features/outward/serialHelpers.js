@@ -8,8 +8,34 @@ export const isCableCategory = (category) => {
   const text = String(category || "").toLowerCase().replace(/[^a-z0-9]+/g, " ");
   return /\bcable\b/.test(text) && /\b(ac|dc)\b/.test(text);
 };
+
+// Serial no. rule of a product, set when the category / model is added:
+//   REQUIRED - scan box shown, every unit needs a serial no.
+//   OPTIONAL - scan box shown, scan all units of the item or none
+//   NOT_REQUIRED - no scan box
+export const SERIAL_MODES = [
+  { value: "REQUIRED", label: "Required", hint: "Every unit must have a serial no. - the scan box shows on inward / outward." },
+  { value: "NOT_REQUIRED", label: "Not required", hint: "No serial numbers for this item - no scan box." },
+  { value: "OPTIONAL", label: "Optional", hint: "Scan box shows, but the manager may skip serial numbers for this item." },
+];
+export const serialModeLabel = (mode) => SERIAL_MODES.find((m) => m.value === mode)?.label || "Required";
+
+/** An item with no mode (product deleted / list not loaded): cables none, everything else required (the old rule). */
+export const serialModeOf = (item) =>
+  SERIAL_MODES.some((m) => m.value === item?.serialMode) ? item.serialMode : isCableCategory(item?.category) ? "NOT_REQUIRED" : "REQUIRED";
+
+/** Adds the product master's serialMode to every item (matched by category + SKU, ignoring upper / lower case). */
+export function withSerialMode(items = [], products = []) {
+  const modes = new Map(products.map((p) => [serialKey(p.category, p.sku), p.serialMode]));
+  return items.map((item) => {
+    const serialMode = modes.get(serialKey(item.category, item.sku));
+    return serialMode ? { ...item, serialMode } : item;
+  });
+}
+
+// Serial numbers are taken per unit, so the item must be counted in Pcs and its product must not be "Not required".
 export const needsSerials = (item) =>
-  !isCableCategory(item?.category) && String(item?.uom || "").trim().toLowerCase() === SERIAL_UOM.toLowerCase();
+  serialModeOf(item) !== "NOT_REQUIRED" && String(item?.uom || "").trim().toLowerCase() === SERIAL_UOM.toLowerCase();
 export const serialKey = (category, sku) => `${String(category || "").trim().toLowerCase()}||${String(sku || "").trim().toLowerCase()}`;
 export const cleanSerialInput = (value) => String(value ?? "").replace(/\s+/g, "");
 
@@ -19,7 +45,7 @@ export function buildSerialLines(items = []) {
   for (const item of items) {
     if (!needsSerials(item)) continue;
     const key = serialKey(item.category, item.sku);
-    const line = map.get(key) || { key, category: item.category, sku: item.sku, quantity: 0 };
+    const line = map.get(key) || { key, category: item.category, sku: item.sku, quantity: 0, serialMode: serialModeOf(item) };
     line.quantity += Number(item.quantity) || 0;
     map.set(key, line);
   }
@@ -64,8 +90,10 @@ export function serialProblem(lines, values) {
       if (seen.has(k)) return `Serial number "${cleanSerialInput(s.serialNo)}" is entered more than once`;
       seen.add(k);
     }
+    if (line.serialMode === "OPTIONAL" && filled.length === 0) continue; // optional item: no serials is fine
     if (filled.length !== line.quantity) {
-      return `${line.sku}: ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} needed, ${filled.length} entered`;
+      const hint = line.serialMode === "OPTIONAL" ? " Enter all of them, or leave this item's serial numbers blank." : "";
+      return `${line.sku}: ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} needed, ${filled.length} entered.${hint}`;
     }
   }
   return null;

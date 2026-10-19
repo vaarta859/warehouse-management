@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { needsSerials, serialKey } from "../features/outward/serialHelpers";
+import { needsSerials, serialKey, withSerialMode } from "../features/outward/serialHelpers";
+import useProducts from "../features/product/useProducts";
 import {
   ArrowLeft,
   Download,
@@ -72,6 +73,7 @@ export default function InwardDetail() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { id } = useParams();
+  const products = useProducts(); // each product's serial rule (decides which items show serial numbers)
 
   const inward = useSelector(selectCurrentInward);
   // Sales / Account can view inward details and download documents, nothing more.
@@ -203,7 +205,7 @@ export default function InwardDetail() {
   if (!inward) return null;
 
   const documents = inward.documents || [];
-  const items = inward.items || [];
+  const items = withSerialMode(inward.items || [], products);
   // Serial numbers shown with their item (rows with the same SKU share one list, split by quantity).
   const serialsByRow = (() => {
     const used = {};

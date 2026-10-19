@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { warehouseIdsForCompanies } from "../utils/warehouseCompanies.js";
 import { isFinanceSide, getFinanceWarehouseIds } from "../utils/outwardWorkflow.js";
  
 /**
@@ -301,11 +302,7 @@ export async function getStockLedger(req, res) {
     // Company chosen but no warehouse: narrow to that company's warehouses
     // (still only ones the caller may see).
     if (!warehouseId && companyId) {
-      const companyWarehouses = await prisma.warehouse.findMany({
-        where: { companyId, ...(warehouseIds ? { id: { in: warehouseIds } } : {}) },
-        select: { id: true },
-      });
-      warehouseIds = companyWarehouses.map((w) => w.id);
+      warehouseIds = await warehouseIdsForCompanies([companyId], warehouseIds);
     }
  
     const searchWhere = search

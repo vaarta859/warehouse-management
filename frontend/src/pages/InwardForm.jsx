@@ -37,7 +37,7 @@ import ItemProductFields, { ItemProductNotice } from "../components/ItemProductF
 import PartyNameField from "../components/PartyNameField";
 import { formatInwardType } from "../features/inward/inwardHelpers";
 import useSerialScanner from "../components/SerialScanner";
-import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, needsSerials } from "../features/outward/serialHelpers";
+import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, needsSerials, withSerialMode } from "../features/outward/serialHelpers";
 
 /*
  * Inward form:
@@ -180,7 +180,9 @@ export default function InwardForm() {
   const [items, setItems] = useState([createItem()]);
   // Serial numbers: one box per Pcs unit (an item of 4 Pcs -> 4 serial numbers), scanned / typed per item.
   const [serialValues, setSerialValues] = useState({});
-  const serialLines = useMemo(() => buildSerialLines(items), [items]);
+  // Each product's serial rule (Required / Not required / Optional) comes from the product list.
+  const serialItems = useMemo(() => withSerialMode(items, products), [items, products]);
+  const serialLines = useMemo(() => buildSerialLines(serialItems), [serialItems]);
   const serialSig = JSON.stringify(serialLines.map((l) => [l.key, l.quantity]));
   // Keep the boxes in step with the items: a changed quantity adds / drops boxes, a removed item drops its serials.
   useEffect(() => {
@@ -194,9 +196,9 @@ export default function InwardForm() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serialSig]);
-  const serial = useSerialScanner({ items, lines: serialLines, values: serialValues, onChange: setSerialValues });
+  const serial = useSerialScanner({ items: serialItems, lines: serialLines, values: serialValues, onChange: setSerialValues });
   // Items that are filled in enough to take serial numbers (category + model + quantity, counted in Pcs).
-  const serialRows = items
+  const serialRows = serialItems
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => needsSerials(item) && item.category && String(item.sku || "").trim() && Number(item.quantity) > 0);
   // An entry saved before serial numbers existed (none saved) can still be edited without them.
@@ -220,13 +222,42 @@ export default function InwardForm() {
     if (!isEdit) dispatch(setSelectedWarehouse(null));
   }, [dispatch, selectedCompanyId, user?.role, isEdit]);
 
+  // Companies a warehouse is linked with (falls back to its single company).
+  const warehouseCompaniesOf = (w) => {
+    if (!w) return [];
+    if (w.companies?.length) return w.companies;
+    return w.company?.id ? [w.company] : [];
+  };
+
+  // Companies the user may pick on this inward: linked with the warehouse,
+  // Active, and (unless Super Admin) one the user belongs to.
+  const userCompanyIds = user?.companyIds?.length ? user.companyIds : [user?.companyId].filter(Boolean);
+  const eligibleCompanies = useMemo(
+    () =>
+      warehouseCompaniesOf(selectedWarehouse).filter(
+        (c) => c.status !== "Inactive" && (isSuperAdmin || userCompanyIds.includes(c.id)),
+      ),
+    [selectedWarehouse, isSuperAdmin, userCompanyIds.join(",")],
+  );
+
+  // Non-super users: one eligible company is chosen automatically; with several
+  // the user picks one (see the Company select below).
   useEffect(() => {
-    if (!isSuperAdmin && selectedWarehouse) {
-      const companyId = selectedWarehouse.companyId || selectedWarehouse.company?.id || "";
-      setSelectedCompanyId(companyId);
-      setCompanyName(selectedWarehouse.company?.name || "");
-    }
-  }, [isSuperAdmin, selectedWarehouse?.id]);
+    if (isSuperAdmin || !selectedWarehouse) return;
+    setSelectedCompanyId((prev) =>
+      eligibleCompanies.some((c) => c.id === prev)
+        ? prev
+        : eligibleCompanies.length === 1
+          ? eligibleCompanies[0].id
+          : "",
+    );
+  }, [isSuperAdmin, selectedWarehouse?.id, eligibleCompanies]);
+
+  // Keep the company name in step with the chosen company.
+  useEffect(() => {
+    const match = warehouseCompaniesOf(selectedWarehouse).find((c) => c.id === selectedCompanyId);
+    if (match) setCompanyName(match.name);
+  }, [selectedCompanyId, selectedWarehouse?.id]);
 
   const topCompanyOptions = useMemo(() => {
     if (user?.role === "SUPER_ADMIN") return companies.filter((c) => c.status !== "Inactive");
@@ -239,12 +270,12 @@ export default function InwardForm() {
 
   const companyWarehouses = useMemo(() => {
     if (!selectedCompanyId) return [];
-    return warehouses.filter((w) => (w.companyId || w.company?.id) === selectedCompanyId);
+    return warehouses.filter((w) => warehouseCompaniesOf(w).some((c) => c.id === selectedCompanyId));
   }, [warehouses, selectedCompanyId]);
 
   useEffect(() => {
     if (isSuperAdmin && !isEdit && selectedCompanyId) {
-      if (!selectedWarehouse || (selectedWarehouse.companyId || selectedWarehouse.company?.id) !== selectedCompanyId) {
+      if (!selectedWarehouse || !warehouseCompaniesOf(selectedWarehouse).some((c) => c.id === selectedCompanyId)) {
         dispatch(setSelectedWarehouse(null));
       }
     }
@@ -261,7 +292,10 @@ export default function InwardForm() {
       const x = result.payload;
       if (x.warehouse) {
         dispatch(setSelectedWarehouse(x.warehouse));
-        setSelectedCompanyId(x.warehouse.companyId || x.warehouse.company?.id || "");
+        // The entry stores the company NAME; match it to one of the warehouse's companies.
+        const linked = warehouseCompaniesOf(x.warehouse);
+        const saved = linked.find((c) => c.name === x.companyName);
+        setSelectedCompanyId(saved?.id || x.warehouse.companyId || x.warehouse.company?.id || "");
       }
       setInwardType(formatInwardType(x.inwardType) !== "-" ? formatInwardType(x.inwardType) : "Purchase - New Stock");
       const dt = x.inwardDateTime || x.refDocDate || x.createdAt;
@@ -273,14 +307,14 @@ export default function InwardForm() {
         }
       }
       setSupplierName(x.supplierName || "");
-      setCompanyName(x.warehouse?.company?.name || x.companyName || "");
+      setCompanyName(x.companyName || x.warehouse?.company?.name || "");
       const refs = Array.isArray(x.referenceDocuments) && x.referenceDocuments.length
         ? x.referenceDocuments
         : [{ refDocType: x.refDocType || "Invoice", refDocNumber: x.refDocNumber || "" }];
       setReferenceDocuments(refs.map((r) => ({ ...DEFAULT_REFERENCE(), refDocType: r.refDocType || "Invoice", refDocNumber: r.refDocNumber || "" })));
       const loadedItems = (x.items || []).map((i) => ({ id: crypto.randomUUID(), category: i.category || "", companyName: i.companyName || "", sku: i.sku || "", quantity: String(i.quantity ?? ""), uom: i.uom || "Pcs" }));
       setItems(loadedItems);
-      setSerialValues(initialSerialValues(buildSerialLines(loadedItems), x.serials || []));
+      setSerialValues(initialSerialValues(buildSerialLines(withSerialMode(loadedItems, products)), x.serials || []));
       setHadNoSerials(!(x.serials || []).length);
       setRemarks(x.remarks || "");
       if (Array.isArray(x.documents) && x.documents.length) {
@@ -718,7 +752,7 @@ export default function InwardForm() {
                 <div><label className={labelCls}>Warehouse</label><div className="relative"><select value={selectedWarehouse?.id || ""} disabled={!selectedCompanyId} onChange={(e) => { const warehouse = companyWarehouses.find((w) => w.id === e.target.value); dispatch(setSelectedWarehouse(warehouse || null)); }} className={`${inputCls} appearance-none bg-white disabled:bg-gray-100 disabled:text-gray-400`}><option value="">{selectedCompanyId ? "Select warehouse" : "Select company first"}</option>{companyWarehouses.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.code})</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div></div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2"><div><label className={labelCls}>Company</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.company?.name || "Assigned company"}</div></div><div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "Assigned warehouse"}</div></div></div>
+              <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2"><div><label className={labelCls}>Company</label>{eligibleCompanies.length > 1 ? (<div className="relative"><select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} className={`${inputCls} appearance-none bg-white`}><option value="">Select company</option>{eligibleCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div>) : (<div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{eligibleCompanies[0]?.name || selectedWarehouse?.company?.name || "Assigned company"}</div>)}</div><div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "Assigned warehouse"}</div></div></div>
             )}
           </div>
 
@@ -959,7 +993,7 @@ export default function InwardForm() {
                   </div>
 
                   {/* Serial numbers: only the SR. No box + Add + Scan, then the numbers entered (no item table). */}
-                  {needsSerials(item) && item.category && String(item.sku || "").trim() && (
+                  {needsSerials(serialItems[index]) && item.category && String(item.sku || "").trim() && (
                     <div className="mt-3 border-t border-gray-200 pt-3">
                       {Number(item.quantity) > 0 ? (
                         <>
@@ -976,7 +1010,13 @@ export default function InwardForm() {
             </div>
             {serialRows.length > 0 && (
               <p className="mt-2 text-xs text-gray-500">
-                Every Pcs unit needs a serial no.: an item of 5 Pcs needs 5. Type the serial no. and press Enter / Add, tap Scan for the camera, or scan with a connected Bluetooth / Wi-Fi / USB scanner.
+                {serialRows.some(({ item }) => item.serialMode === "REQUIRED")
+                  ? "Items marked Required need a serial no. for every Pcs unit (5 Pcs = 5 serial numbers). "
+                  : ""}
+                {serialRows.some(({ item }) => item.serialMode === "OPTIONAL")
+                  ? "Optional items: scan all units, or leave blank to skip. "
+                  : ""}
+                Type the serial no. and press Enter / Add, tap Scan for the camera, or scan with a connected Bluetooth / Wi-Fi / USB scanner.
               </p>
             )}
             {serial.camera}

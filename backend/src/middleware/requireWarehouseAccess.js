@@ -1,4 +1,6 @@
 import prisma from '../config/prisma.js';
+import { getWarehouseCompanies, allCompaniesInactive, sharesCompany } from '../utils/warehouseCompanies.js';
+import { getUserCompanyIds } from '../utils/outwardWorkflow.js';
 
 /**
  * requireWarehouseAccess — scopes a route that operates on ONE
@@ -65,7 +67,8 @@ export default function requireWarehouseAccess(permission, getWarehouseId) {
       // --- Hard blocks that apply to EVERYONE, SUPER_ADMIN included ---
       // A company set Inactive takes every one of its warehouses down
       // with it: nobody can inward or outward against them.
-      if (warehouse.company && warehouse.company.status === 'Inactive') {
+      const warehouseCompanies = await getWarehouseCompanies(warehouseId);
+      if (allCompaniesInactive(warehouseCompanies)) {
         return res.status(403).json({
           message: 'This warehouse belongs to an inactive company. Inward/outward is disabled.',
         });
@@ -94,6 +97,11 @@ export default function requireWarehouseAccess(permission, getWarehouseId) {
 
       if (!access || access.accessLevel !== 'MANAGE') {
         return res.status(403).json({ message: "You don't have access to this warehouse" });
+      }
+
+      // ...and the warehouse must still be linked with one of the user's companies.
+      if (!sharesCompany(warehouseCompanies, await getUserCompanyIds(req.user))) {
+        return res.status(403).json({ message: "This warehouse is not linked with any of your companies" });
       }
 
       // Per-user flag — e.g. a administrator can turn off just THIS

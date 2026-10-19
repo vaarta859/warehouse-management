@@ -52,7 +52,8 @@ import {
   isAccountDocCategory,
   refTypeLabel,
 } from "../features/outward/outwardHelpers";
-import { needsSerials, serialKey } from "../features/outward/serialHelpers";
+import { needsSerials, serialKey, withSerialMode } from "../features/outward/serialHelpers";
+import useProducts from "../features/product/useProducts";
 import { downloadOutwardPdf } from "../features/outward/outwardPdf";
 import OutwardDocuments from "../components/OutwardDocuments";
 import AccountOutwardPanel from "../components/AccountOutwardPanel";
@@ -62,6 +63,7 @@ export default function OutwardDetail() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { id } = useParams();
+  const products = useProducts(); // each product's serial rule (decides which items show serial numbers)
 
   const outward = useSelector(selectCurrentOutward);
   const detailStatus = useSelector(selectOutwardDetailStatus);
@@ -184,7 +186,7 @@ export default function OutwardDetail() {
   if (!outward) return null;
 
   const documents = outward.documents || [];
-  const items = outward.items || [];
+  const items = withSerialMode(outward.items || [], products);
   // Serial numbers shown with their item (rows with the same SKU share one list, split by quantity).
   const serialsByRow = (() => {
     const used = {};

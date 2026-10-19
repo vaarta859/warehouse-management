@@ -1,7 +1,21 @@
 import prisma from "../config/prisma.js";
 import { recordAuditLog, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
-import { findUnknownProducts, unknownProductsMessage } from "../utils/productCatalog.js";
-import { isFinanceSide, getFinanceWarehouseIds } from "../utils/outwardWorkflow.js";
+import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
+import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
+import { getWarehouseCompanies, allCompaniesInactive } from "../utils/warehouseCompanies.js";
+
+// The company picked on the inward form must be one of the warehouse's linked
+// companies, still Active, and (unless Super Admin) one the user belongs to.
+// Returns an error message, or null when the choice is fine.
+async function checkInwardCompany(user, warehouseCompanies, companyId) {
+  const chosen = warehouseCompanies.find((c) => c.id === companyId);
+  if (!companyId || !chosen) return "Selected company is not linked with this warehouse.";
+  if (chosen.status === "Inactive") return "The selected company is inactive.";
+  if (user.role !== "SUPER_ADMIN" && !(await getUserCompanyIds(user)).includes(companyId)) {
+    return "You don't belong to the selected company.";
+  }
+  return null;
+}
 import { cleanSerials } from "../utils/serials.js";
 import { validateInwardSerials, replaceGrnSerials, pruneGrnSerials } from "../utils/inwardSerials.js";
  
@@ -672,10 +686,11 @@ export async function updateGrn(req, res) {
  
     const warehouse = await prisma.warehouse.findUnique({
       where: { id: existing.warehouseId },
-      select: { id: true, companyId: true, Inward: true, company: { select: { status: true } } },
+      select: { id: true, companyId: true, Inward: true },
     });
     if (!warehouse) return res.status(404).json({ message: "Warehouse not found" });
-    if (warehouse.company?.status === "Inactive" || warehouse.Inward !== "Active") {
+    const warehouseCompanies = await getWarehouseCompanies(warehouse.id);
+    if (allCompaniesInactive(warehouseCompanies) || warehouse.Inward !== "Active") {
       return res.status(403).json({ message: "Inward is disabled for this warehouse/company." });
     }
     if (req.user.role === "WAREHOUSE_MANAGER") {
@@ -690,9 +705,8 @@ export async function updateGrn(req, res) {
     if (!data.inwardType || !data.supplierName?.trim() || !data.companyName?.trim()) {
       return res.status(422).json({ message: "Inward type, supplier and company name are required." });
     }
-    if (!data.companyId || data.companyId !== warehouse.companyId) {
-      return res.status(400).json({ message: "Selected company does not match this warehouse." });
-    }
+    const companyError = await checkInwardCompany(req.user, warehouseCompanies, data.companyId);
+    if (companyError) return res.status(400).json({ message: companyError });
     if (!references.length || !references.some((r) => r?.refDocNumber)) {
       return res.status(422).json({ message: "At least one reference document is required." });
     }
@@ -736,9 +750,11 @@ export async function updateGrn(req, res) {
     // (and trimmed if the items changed).
     const serialsProvided = Array.isArray(data.serials);
     const serials = cleanSerials(data.serials);
+    // Each product's serial rule (Required / Not required / Optional) decides which items take serial numbers.
+    const serialItems = await withSerialModes(prisma, newItems);
     if (serialsProvided) {
       // An entry saved before serial numbers existed (none saved) can still be edited without them.
-      const serialProblem = validateInwardSerials(newItems, serials, { allowEmpty: existing._count.serials === 0 });
+      const serialProblem = validateInwardSerials(serialItems, serials, { allowEmpty: existing._count.serials === 0 });
       if (serialProblem) return res.status(422).json({ message: serialProblem });
     }
     const fieldChanges = diffFields(existing, newSnapshot, [
@@ -773,7 +789,7 @@ export async function updateGrn(req, res) {
         await replaceGrnSerials(tx, id, serials);
         serialsChanged = serials.length !== existing._count.serials;
       } else {
-        serialsChanged = (await pruneGrnSerials(tx, id, newItems)) > 0;
+        serialsChanged = (await pruneGrnSerials(tx, id, serialItems)) > 0;
       }
 
       // -------------------------------------------------
@@ -906,16 +922,15 @@ export async function createGrn(req, res) {
       where: { id: data.warehouseId },
       select: {
         id: true, code: true, companyId: true, Inward: true,
-        company: { select: { id: true, name: true, status: true } },
       },
     });
     if (!transactionWarehouse) return res.status(404).json({ message: "Warehouse not found" });
-    if (transactionWarehouse.companyId !== data.companyId) {
-      return res.status(400).json({ message: "Selected warehouse does not belong to the selected company" });
-    }
-    if (transactionWarehouse.company?.status === "Inactive" || transactionWarehouse.Inward !== "Active") {
+    const transactionCompanies = await getWarehouseCompanies(transactionWarehouse.id);
+    if (allCompaniesInactive(transactionCompanies) || transactionWarehouse.Inward !== "Active") {
       return res.status(403).json({ message: "Inward is disabled for this warehouse/company." });
     }
+    const companyError = await checkInwardCompany(req.user, transactionCompanies, data.companyId);
+    if (companyError) return res.status(400).json({ message: companyError });
     if (!data.refDocNumber && !Array.isArray(data.otherDocumentNumbers)) {
       return res.status(422).json({ message: "At least one document number is required" });
     }
@@ -1041,7 +1056,7 @@ export async function createGrn(req, res) {
  
     // Serial numbers: one for every Pcs unit (an item of 5 Pcs needs 5).
     const serials = cleanSerials(data.serials);
-    const serialProblem = validateInwardSerials(itemRows, serials);
+    const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials);
     if (serialProblem) return res.status(422).json({ message: serialProblem });
 
     let createdGrn = null;

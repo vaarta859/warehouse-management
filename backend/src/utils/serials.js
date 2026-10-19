@@ -20,8 +20,18 @@ export const isCableCategory = (category) => {
   const text = String(category || "").toLowerCase().replace(/[^a-z0-9]+/g, " ");
   return /\bcable\b/.test(text) && /\b(ac|dc)\b/.test(text);
 };
+export const SERIAL_MODES = ["REQUIRED", "NOT_REQUIRED", "OPTIONAL"];
+
+/**
+ * The product's serial rule. `item.serialMode` comes from the product master (see withSerialModes).
+ * An item with no mode (its product was deleted) follows the old rule: cables none, everything else required.
+ */
+export const serialModeOf = (item) =>
+  SERIAL_MODES.includes(item?.serialMode) ? item.serialMode : isCableCategory(item?.category) ? "NOT_REQUIRED" : "REQUIRED";
+
+// Serial numbers are taken per unit, so the item must be counted in Pcs and its product must not be "Not required".
 export const needsSerials = (item) =>
-  !isCableCategory(item?.category) && String(item?.uom || "").trim().toLowerCase() === SERIAL_UOM.toLowerCase();
+  serialModeOf(item) !== "NOT_REQUIRED" && String(item?.uom || "").trim().toLowerCase() === SERIAL_UOM.toLowerCase();
 export const serialKey = (category, sku) =>
   `${String(category || "").trim().toLowerCase()}||${String(sku || "").trim().toLowerCase()}`;
 export const normalizeSerial = (value) => String(value ?? "").trim();
@@ -32,7 +42,7 @@ export function requiredSerialLines(items = []) {
   for (const item of items) {
     if (!needsSerials(item)) continue;
     const key = serialKey(item.category, item.sku);
-    const line = lines.get(key) || { category: item.category, sku: item.sku, quantity: 0 };
+    const line = lines.get(key) || { category: item.category, sku: item.sku, quantity: 0, serialMode: serialModeOf(item) };
     line.quantity += Number(item.quantity) || 0;
     lines.set(key, line);
   }
@@ -71,6 +81,8 @@ export function validateSerials(items, serials) {
 
   for (const [key, line] of lines) {
     const have = counts.get(key) || 0;
+    // OPTIONAL: all units or none. REQUIRED: all units.
+    if (line.serialMode === "OPTIONAL" && have === 0) continue;
     if (have !== line.quantity) {
       return `${line.sku}: ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} needed, ${have} entered`;
     }

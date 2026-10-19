@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { warehouseIdsForCompanies } from "./warehouseCompanies.js";
 
 /**
  * =========================================================
@@ -99,11 +100,7 @@ export async function getUserCompanyIds(user) {
 export async function getFinanceWarehouseIds(user) {
   const companyIds = await getUserCompanyIds(user);
   if (!companyIds.length) return [];
-  const rows = await prisma.warehouse.findMany({
-    where: { companyId: { in: companyIds } },
-    select: { id: true },
-  });
-  return rows.map((r) => r.id);
+  return warehouseIdsForCompanies(companyIds);
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import CompanyMultiSelect from "../components/CompanyMultiSelect";
 import { useSearchParams } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -46,7 +47,7 @@ const EMPTY = {
   city: "",
   state: "",
   pincode: "",
-  companyId: "",
+  companyIds: [],
 };
 
 const pincodeRegex = /^\d{6}$/;
@@ -99,9 +100,8 @@ export default function WarehouseManagement() {
     DEFAULT_PERMISSIONS,
   );
 
-  const effectiveCompanyId = isSuper
-    ? queryCompanyId || undefined
-    : currentUser?.companyId || undefined;
+  // Non-super users are scoped on the server by every company they belong to.
+  const effectiveCompanyId = isSuper ? queryCompanyId || undefined : undefined;
 
   useEffect(() => {
     dispatch(
@@ -130,6 +130,7 @@ export default function WarehouseManagement() {
         w.state,
         w.pincode,
         w.company?.name,
+        ...(w.companies || []).map((c) => c.name),
       ].some((x) =>
         String(x || "")
           .toLowerCase()
@@ -143,7 +144,7 @@ export default function WarehouseManagement() {
 
     setForm({
       ...EMPTY,
-      companyId: effectiveCompanyId || "",
+      companyIds: effectiveCompanyId ? [effectiveCompanyId] : [],
     });
 
     setFormError("");
@@ -159,7 +160,11 @@ export default function WarehouseManagement() {
       city: warehouse.city || "",
       state: warehouse.state || "",
       pincode: warehouse.pincode || "",
-      companyId: warehouse.companyId || "",
+      companyIds: warehouse.companyIds?.length
+        ? warehouse.companyIds
+        : warehouse.companyId
+          ? [warehouse.companyId]
+          : [],
     });
 
     setFormError("");
@@ -191,9 +196,9 @@ export default function WarehouseManagement() {
       );
     }
 
-    if (isSuper && !form.companyId) {
+    if (isSuper && !form.companyIds.length) {
       return setFormError(
-        "Please select a company.",
+        "Please select at least one company.",
       );
     }
 
@@ -204,7 +209,7 @@ export default function WarehouseManagement() {
       state: form.state.trim(),
       pincode: form.pincode.trim(),
       ...(isSuper
-        ? { companyId: form.companyId }
+        ? { companyIds: form.companyIds }
         : {}),
     };
 
@@ -324,11 +329,7 @@ export default function WarehouseManagement() {
       fetchWarehouseAccess(warehouse.id),
     );
 
-    dispatch(
-      getAllUsers({
-        companyId: warehouse.companyId,
-      }),
-    );
+    dispatch(getAllUsers());
   };
 
   const handleGrantUserChange = (userId) => {
@@ -480,8 +481,15 @@ export default function WarehouseManagement() {
 
                   We don't overwrite w.Inward/w.Outward.
                 */
+                const linkedCompanies = w.companies?.length
+                  ? w.companies
+                  : w.company
+                    ? [w.company]
+                    : [];
+                // Off only when every linked company is inactive
                 const companyInactive =
-                  w.company?.status === "Inactive";
+                  linkedCompanies.length > 0 &&
+                  linkedCompanies.every((c) => c.status === "Inactive");
 
                 const effectiveInward =
                   !companyInactive &&
@@ -542,21 +550,28 @@ export default function WarehouseManagement() {
                     </td>
 
                     <td data-label="Company" className="px-3 py-3">
-                      <div className="flex items-center justify-end gap-1.5 md:justify-start">
-                        <Building2
-                          size={13}
-                          className="text-gray-400 shrink-0"
-                        />
-
-                        <span className="text-gray-700">
-                          {w.company?.name ||
-                            "Unassigned"}
-                        </span>
-
-                        {companyInactive && (
-                          <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-600">
-                            Inactive
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 md:justify-start">
+                        {(w.companies?.length
+                          ? w.companies
+                          : w.company
+                            ? [w.company]
+                            : []
+                        ).map((c) => (
+                          <span
+                            key={c.id}
+                            className="inline-flex max-w-full items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700"
+                          >
+                            <Building2 size={12} className="shrink-0 text-gray-400" />
+                            <span className="truncate">{c.name}</span>
+                            {c.status === "Inactive" && (
+                              <span className="rounded-full bg-red-50 px-1.5 text-[10px] font-medium text-red-600">
+                                Inactive
+                              </span>
+                            )}
                           </span>
+                        ))}
+                        {!(w.companies?.length || w.company) && (
+                          <span className="text-gray-500">Unassigned</span>
                         )}
                       </div>
                     </td>
@@ -722,37 +737,16 @@ export default function WarehouseManagement() {
             />
 
             {isSuper && (
-              <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-black">
-                  Company
-                </span>
-
-                <select
-                  value={form.companyId}
-                  onChange={(e) =>
-                    setForm((p) => ({
-                      ...p,
-                      companyId:
-                        e.target.value,
-                    }))
-                  }
-                  required
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                >
-                  <option value="">
-                    Select company
-                  </option>
-
-                  {companies.map((c) => (
-                    <option
-                      key={c.id}
-                      value={c.id}
-                    >
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <CompanyMultiSelect
+                companies={companies}
+                value={form.companyIds}
+                onChange={(ids) =>
+                  setForm((p) => ({ ...p, companyIds: ids }))
+                }
+                label="Companies"
+                placeholder="Select companies"
+                hint="Users of any selected company can be given access to this warehouse."
+              />
             )}
 
             {formError && (
@@ -880,7 +874,12 @@ export default function WarehouseManagement() {
                       (u.companyIds?.length
                         ? u.companyIds
                         : [u.companyId]
-                      ).includes(accessWarehouse.companyId) &&
+                      ).some((id) =>
+                        (accessWarehouse.companyIds?.length
+                          ? accessWarehouse.companyIds
+                          : [accessWarehouse.companyId]
+                        ).includes(id),
+                      ) &&
                       u.role ===
                         "WAREHOUSE_MANAGER",
                   )

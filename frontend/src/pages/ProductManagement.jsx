@@ -23,9 +23,18 @@ import {
   selectProductSaveStatus,
   selectProductError,
 } from "../features/product/productSlice";
+import SerialModePicker from "../components/SerialModePicker";
+import { serialModeLabel } from "../features/outward/serialHelpers";
+
+const MODE_BADGE = {
+  REQUIRED: "border-amber-200 bg-amber-50 text-amber-800",
+  OPTIONAL: "border-sky-200 bg-sky-50 text-sky-800",
+  NOT_REQUIRED: "border-gray-200 bg-gray-50 text-gray-600",
+};
 
 const NEW_CATEGORY = "__new__";
-const EMPTY_FORM = { category: "", sku: "" };
+const EMPTY_FORM = { category: "", sku: "", serialMode: "REQUIRED" };
+const newRow = () => ({ id: Math.random().toString(36).slice(2), sku: "" });
 
 export default function ProductManagement() {
   const dispatch = useDispatch();
@@ -52,6 +61,11 @@ export default function ProductManagement() {
   // "list" = pick an existing category, "new" = type a new one
   const [categoryMode, setCategoryMode] = useState("list");
   const [formError, setFormError] = useState("");
+  // SKU / model rows of the form: many can be added together when creating, one when editing.
+  const [rows, setRows] = useState([newRow()]);
+  const updateRow = (id, patch) => setRows((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((list) => [...list, newRow()]);
+  const removeRow = (id) => setRows((list) => (list.length > 1 ? list.filter((r) => r.id !== id) : list));
 
   useEffect(() => {
     if (isAdmin) dispatch(fetchProducts({ force: true })); // always fresh here
@@ -80,6 +94,7 @@ export default function ProductManagement() {
   }
 
   const openCreate = () => {
+    setRows([newRow()]);
     setMode("create");
     setSelected(null);
     setForm(EMPTY_FORM);
@@ -91,7 +106,8 @@ export default function ProductManagement() {
   const openEdit = (product) => {
     setMode("edit");
     setSelected(product);
-    setForm({ category: product.category, sku: product.sku });
+    setForm({ category: product.category, sku: product.sku, serialMode: product.serialMode || "REQUIRED" });
+    setRows([{ id: product.id, sku: product.sku }]);
     setCategoryMode("list");
     setFormError("");
     setShowForm(true);
@@ -110,7 +126,9 @@ export default function ProductManagement() {
       setForm((f) => ({ ...f, category: "" }));
       return;
     }
-    setForm((f) => ({ ...f, category: value }));
+    // An existing category already has a serial no. rule: show it (changing it changes the whole category).
+    const existing = products.find((p) => p.category === value);
+    setForm((f) => ({ ...f, category: value, serialMode: existing?.serialMode || f.serialMode }));
   };
 
   const submit = async (event) => {
@@ -118,25 +136,48 @@ export default function ProductManagement() {
     setFormError("");
 
     const category = form.category.trim();
-    const sku = form.sku.trim();
-
     if (!category) return setFormError("Item category is required.");
-    if (!sku) return setFormError("SKU / module name is required.");
 
-    const result =
-      mode === "create"
-        ? await dispatch(createProduct({ category, sku }))
-        : await dispatch(updateProduct({ id: selected.id, category, sku }));
+    const cleaned = rows.map((r) => ({ ...r, sku: r.sku.trim() }));
+    if (cleaned.some((r) => !r.sku)) return setFormError("SKU / module name is required for every row.");
 
-    const rejected =
-      mode === "create"
-        ? createProduct.rejected.match(result)
-        : updateProduct.rejected.match(result);
+    // ---------------- edit: one product ----------------
+    if (mode === "edit") {
+      const [row] = cleaned;
+      const result = await dispatch(
+        updateProduct({ id: selected.id, category, sku: row.sku, serialMode: form.serialMode })
+      );
+      if (updateProduct.rejected.match(result)) {
+        setFormError(result.payload || "Failed to update product");
+        return;
+      }
+      close();
+      return;
+    }
 
-    if (rejected) {
+    // ---------------- create: many SKU / models together ----------------
+    const seen = new Set();
+    for (const r of cleaned) {
+      const key = r.sku.toLowerCase();
+      if (seen.has(key)) return setFormError(`"${r.sku}" is entered more than once.`);
+      seen.add(key);
+    }
+
+    const failed = [];
+    const failedMessages = [];
+    for (const r of cleaned) {
+      const result = await dispatch(createProduct({ category, sku: r.sku, serialMode: form.serialMode }));
+      if (createProduct.rejected.match(result)) {
+        failed.push(r);
+        failedMessages.push(result.payload || `Failed to add "${r.sku}"`);
+      }
+    }
+
+    if (failed.length) {
+      // Keep only the rows that were not saved so they can be fixed and sent again.
+      setRows(failed);
       setFormError(
-        result.payload ||
-          (mode === "create" ? "Failed to create product" : "Failed to update product")
+        `${cleaned.length - failed.length} added, ${failed.length} not added: ${failedMessages.join("; ")}`
       );
       return;
     }
@@ -227,6 +268,9 @@ export default function ProductManagement() {
                   <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                     SKU / Module name
                   </th>
+                  <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Serial no.
+                  </th>
                   <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                     Actions
                   </th>
@@ -243,6 +287,11 @@ export default function ProductManagement() {
                     <td data-label="SKU / Module" className="sku-cell px-5 py-3.5 text-sm font-medium">
                       <span className="inline-block max-w-full break-words rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-[13px] font-semibold text-emerald-800">
                         {product.sku}
+                      </span>
+                    </td>
+                    <td data-label="Serial no." className="px-5 py-3.5">
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${MODE_BADGE[product.serialMode] || MODE_BADGE.REQUIRED}`}>
+                        {serialModeLabel(product.serialMode)}
                       </span>
                     </td>
                     <td data-label="Actions" className="px-5 py-3.5">
@@ -341,17 +390,61 @@ export default function ProductManagement() {
                   )}
                 </div>
 
-                {/* SKU */}
-                <label className="block">
-                  <span className="mb-1 block text-sm font-semibold text-black">SKU / Module name</span>
-                  <input
-                    value={form.sku}
-                    onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                    placeholder="e.g. GW5000-DNS"
-                    maxLength={100}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                {/* Serial no. is decided per CATEGORY (all its models follow it) */}
+                <div>
+                  <SerialModePicker
+                    value={form.serialMode}
+                    onChange={(serialMode) => setForm((f) => ({ ...f, serialMode }))}
+                    disabled={saving}
                   />
-                </label>
+                  <p className="mt-1 text-xs text-gray-400">
+                    This applies to every model of the category.
+                  </p>
+                </div>
+
+                {/* SKU / models - several can be added together (model name only) */}
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="block text-sm font-semibold text-black">SKU / Module name</span>
+                    {mode === "create" && (
+                      <button
+                        type="button"
+                        onClick={addRow}
+                        disabled={saving}
+                        className="inline-flex items-center gap-0.5 text-xs font-semibold text-blue-700 hover:underline disabled:opacity-60"
+                      >
+                        <Plus size={13} /> Add
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    {rows.map((row, index) => (
+                      <div key={row.id} className="rounded-lg border border-gray-200 p-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={row.sku}
+                            onChange={(e) => updateRow(row.id, { sku: e.target.value })}
+                            placeholder="e.g. GW5000-DNS"
+                            maxLength={100}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                          />
+                          {rows.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeRow(row.id)}
+                              disabled={saving}
+                              title={`Remove model ${index + 1}`}
+                              className="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-60"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
                 {formError && (
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

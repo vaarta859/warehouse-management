@@ -23,10 +23,18 @@ import prisma from "../config/prisma.js";
 
 const MAX_LENGTH = 100;
 
+// Serial number rule of a product: REQUIRED | NOT_REQUIRED | OPTIONAL.
+const SERIAL_MODES = ["REQUIRED", "NOT_REQUIRED", "OPTIONAL"];
+const cleanSerialMode = (value) => {
+  const mode = String(value ?? "").trim().toUpperCase();
+  return SERIAL_MODES.includes(mode) ? mode : null;
+};
+
 const PRODUCT_SELECT = {
   id: true,
   category: true,
   sku: true,
+  serialMode: true,
   createdAt: true,
   updatedAt: true,
 };
@@ -55,6 +63,22 @@ async function canonicalCategory(client, category, excludeId) {
     select: { category: true },
   });
   return existing ? existing.category : category;
+}
+
+// The serial no. rule belongs to the CATEGORY: every model of a category shares it.
+async function categoryMode(client, category) {
+  const row = await client.product.findFirst({
+    where: { category: { equals: category, mode: "insensitive" } },
+    select: { serialMode: true },
+  });
+  return row ? row.serialMode : null;
+}
+
+async function applyCategoryMode(client, category, serialMode) {
+  await client.product.updateMany({
+    where: { category: { equals: category, mode: "insensitive" }, NOT: { serialMode } },
+    data: { serialMode },
+  });
 }
 
 async function findDuplicate(client, category, sku, excludeId) {
@@ -115,15 +139,28 @@ export async function createProduct(req, res) {
 
     const category = await canonicalCategory(prisma, rawCategory);
 
+    // Serial no. rule (Required / Not required / Optional) belongs to the category.
+    // Not sent: a new model joins its category's rule (a brand-new category starts as Required).
+    const sent = req.body.serialMode === undefined ? undefined : cleanSerialMode(req.body.serialMode);
+    if (sent === null) {
+      return res.status(400).json({ message: "Serial no. must be Required, Not required or Optional" });
+    }
+    const serialMode = sent || (await categoryMode(prisma, category)) || "REQUIRED";
+
     if (await findDuplicate(prisma, category, sku)) {
       return res.status(409).json({
         message: `"${sku}" already exists in ${category}`,
       });
     }
 
-    const product = await prisma.product.create({
-      data: { category, sku },
-      select: PRODUCT_SELECT,
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: { category, sku, serialMode },
+        select: PRODUCT_SELECT,
+      });
+      // The rule was changed while adding to an existing category: all its models follow it.
+      if (sent) await applyCategoryMode(tx, category, serialMode);
+      return created;
     });
 
     return res.status(201).json({
@@ -159,6 +196,12 @@ export async function updateProduct(req, res) {
     const problem = validate(rawCategory, sku);
     if (problem) return res.status(400).json({ message: problem });
 
+    const serialMode =
+      req.body.serialMode === undefined ? existing.serialMode : cleanSerialMode(req.body.serialMode);
+    if (!serialMode) {
+      return res.status(400).json({ message: "Serial no. must be Required, Not required or Optional" });
+    }
+
     const category = await canonicalCategory(prisma, rawCategory, id);
 
     if (await findDuplicate(prisma, category, sku, id)) {
@@ -174,9 +217,12 @@ export async function updateProduct(req, res) {
     const product = await prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({
         where: { id },
-        data: to,
+        data: { ...to, serialMode },
         select: PRODUCT_SELECT,
       });
+
+      // The serial no. rule is per category: every model of the category follows it.
+      await applyCategoryMode(tx, category, serialMode);
 
       // Keep past inward / outward items pointing at the same product.
       if (renamed) {

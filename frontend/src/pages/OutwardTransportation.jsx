@@ -14,7 +14,8 @@ import {
 import { TRANSPORT_MODES, DISPATCH_MODES, isTransportSubmitted, formatOutwardType, SERIAL_SOURCE_TYPES } from "../features/outward/outwardHelpers";
 import useSerialScanner from "../components/SerialScanner";
 import apiClient from "../services/apiClient";
-import { buildSerialLines, initialSerialValues, serialPayload, serialProblem } from "../features/outward/serialHelpers";
+import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, withSerialMode } from "../features/outward/serialHelpers";
+import useProducts from "../features/product/useProducts";
 
 /**
  * =========================================================
@@ -56,12 +57,15 @@ export default function OutwardTransportation() {
   const [serialValues, setSerialValues] = useState({});
   const serialsInitFor = useRef(null);
   const locked = Boolean(outward?.transportLocked);
-  const serialLines = useMemo(() => buildSerialLines(outward?.items || []), [outward?.items]);
+  const products = useProducts();
+  // Each product's serial rule (Required / Not required / Optional) comes from the product list.
+  const serialItems = useMemo(() => withSerialMode(outward?.items || [], products), [outward?.items, products]);
+  const serialLines = useMemo(() => buildSerialLines(serialItems), [serialItems]);
   // Load saved serial numbers once per entry (a later refresh must not wipe what is being scanned).
   useEffect(() => {
     if (!outward || outward.id !== id || serialsInitFor.current === id) return;
     serialsInitFor.current = id;
-    setSerialValues(initialSerialValues(buildSerialLines(outward.items || []), outward.serials || []));
+    setSerialValues(initialSerialValues(buildSerialLines(withSerialMode(outward.items || [], products)), outward.serials || []));
   }, [outward, id]);
   // Serial numbers in stock that can be chosen for each item (same inward-type rule the server enforces on submit).
   const [stockSerials, setStockSerials] = useState(null);
@@ -74,7 +78,7 @@ export default function OutwardTransportation() {
       .catch(() => { if (!cancelled) setStockSerials(null); }); // no list: typing / scanning still works
     return () => { cancelled = true; };
   }, [outward?.id, id, locked]);
-  const serial = useSerialScanner({ items: outward?.items || [], lines: serialLines, values: serialValues, onChange: setSerialValues, disabled: locked, suggestions: stockSerials });
+  const serial = useSerialScanner({ items: serialItems, lines: serialLines, values: serialValues, onChange: setSerialValues, disabled: locked, suggestions: stockSerials });
 
   const inputCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-gray-400";
   const labelCls = "block text-sm font-semibold text-black mb-1.5";

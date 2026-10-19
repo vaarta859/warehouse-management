@@ -16,7 +16,7 @@ const COMPANY_SELECT = {
   // `users` = users whose primary company this is (old single-company field),
   // `members` = users linked through UserCompany (a user can have many companies).
   _count: {
-    select: { warehouses: true, users: true, members: true },
+    select: { warehouses: true, warehouseLinks: true, users: true, members: true },
   },
 };
 
@@ -25,11 +25,16 @@ const COMPANY_SELECT = {
 function shapeCompany(company) {
   if (!company?._count) return company;
 
-  const { members, users, ...counts } = company._count;
+  const { members, users, warehouseLinks, ...counts } = company._count;
 
   return {
     ...company,
-    _count: { ...counts, users: Math.max(users || 0, members || 0) },
+    _count: {
+      ...counts,
+      // a warehouse counts for every company it is linked with
+      warehouses: Math.max(counts.warehouses || 0, warehouseLinks || 0),
+      users: Math.max(users || 0, members || 0),
+    },
   };
 }
 
@@ -153,16 +158,20 @@ export async function getCompany(req, res) {
       where: { id: req.params.id },
       select: {
         ...COMPANY_SELECT,
-        warehouses: {
+        warehouseLinks: {
           select: {
-            id: true,
-            name: true,
-            code: true,
-            locality: true,
-            city: true,
-            state: true,
-            Inward: true,
-            Outward: true,
+            warehouse: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                locality: true,
+                city: true,
+                state: true,
+                Inward: true,
+                Outward: true,
+              },
+            },
           },
         },
       },
@@ -172,7 +181,10 @@ export async function getCompany(req, res) {
       return res.status(404).json({ message: "Company not found" });
     }
 
-    return res.json({ company: shapeCompany(company) });
+    // Every warehouse linked with this company (primary or not)
+    const { warehouseLinks, ...rest } = company;
+    const linked = warehouseLinks.map((l) => l.warehouse);
+    return res.json({ company: shapeCompany({ ...rest, warehouses: linked }) });
   } catch (error) {
     console.error("Get company error:", error);
     return res.status(500).json({
@@ -227,8 +239,22 @@ export async function updateCompany(req, res) {
       });
 
       if (isBeingDeactivated || isBeingActivated) {
+        // A warehouse shared with another ACTIVE company stays on when this
+        // company is deactivated; only warehouses with no other active company go off.
         await tx.warehouse.updateMany({
-          where: { companyId: req.params.id },
+          where: {
+            OR: [
+              { companyId: req.params.id },
+              { companyLinks: { some: { companyId: req.params.id } } },
+            ],
+            ...(isBeingDeactivated && {
+              NOT: {
+                companyLinks: {
+                  some: { companyId: { not: req.params.id }, company: { status: "Active" } },
+                },
+              },
+            }),
+          },
           data: isBeingDeactivated
             ? { Inward: "Inactive", Outward: "Inactive" }
             : { Inward: "Active", Outward: "Active" },
@@ -258,7 +284,7 @@ export async function deleteCompany(req, res) {
       where: { id: req.params.id },
       select: {
         id: true,
-        _count: { select: { warehouses: true, users: true, members: true } },
+        _count: { select: { warehouses: true, warehouseLinks: true, users: true, members: true } },
       },
     });
 
@@ -266,15 +292,16 @@ export async function deleteCompany(req, res) {
       return res.status(404).json({ message: "Company not found" });
     }
 
+    const warehouseCount = Math.max(company._count.warehouses, company._count.warehouseLinks);
     const userCount = Math.max(company._count.users, company._count.members);
-    const hasDependents = company._count.warehouses > 0 || userCount > 0;
+    const hasDependents = warehouseCount > 0 || userCount > 0;
 
     if (hasDependents && force !== "true") {
       return res.status(409).json({
         message:
           "This company still has warehouses or users linked to it. " +
           "Reassign or remove them first, or retry with ?force=true to unlink and delete anyway.",
-        warehouseCount: company._count.warehouses,
+        warehouseCount,
         userCount,
       });
     }

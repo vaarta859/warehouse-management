@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import prisma from "../config/prisma.js";
+import { warehouseIdsForCompanies, getWarehouseCompanies, allCompaniesInactive, sharesCompany } from "../utils/warehouseCompanies.js";
 import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
 import { recordAuditLog, recordAuditLogs, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
 import { storeOutwardFiles } from "./documentController.js";
 import { outwardFolder } from "../utils/outwardWorkflow.js";
-import { findUnknownProducts, unknownProductsMessage } from "../utils/productCatalog.js";
+import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
 import { getWarehouseStock, findShortages, shortageMessage } from "../utils/stock.js";
 import { cleanSerials, validateSerials, replaceSerials, pruneSerials } from "../utils/serials.js";
 import { findSerialSourceProblem, listAvailableSerials } from "../utils/serialSources.js";
@@ -91,8 +92,7 @@ async function getScopedWarehouseIds(req) {
   if (isFinanceSide(role)) {
     const companyIds = await getUserCompanyIds(req.user);
     if (!companyIds.length) return [];
-    const rows = await prisma.warehouse.findMany({ where: { companyId: { in: companyIds } }, select: { id: true } });
-    return rows.map((r) => r.id);
+    return warehouseIdsForCompanies(companyIds);
   }
   return [];
 }
@@ -116,7 +116,8 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
     select: { id: true, code: true, companyId: true, Outward: true, company: { select: { id: true, name: true, status: true } } },
   });
   if (!warehouse) throw httpError(404, "Warehouse not found");
-  if (warehouse.company?.status === "Inactive") throw httpError(403, "This warehouse belongs to an inactive company.");
+  const warehouseCompanies = await getWarehouseCompanies(warehouseId);
+  if (allCompaniesInactive(warehouseCompanies)) throw httpError(403, "This warehouse belongs to an inactive company.");
   if (permission === "canOutward" && warehouse.Outward !== "Active") throw httpError(403, "Outward is disabled for this warehouse.");
 
   if (req.user.role === "SUPER_ADMIN") return warehouse;
@@ -124,7 +125,7 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
   // SALES / ACCOUNT: access comes from the company they belong to.
   if (isFinanceSide(req.user.role)) {
     const companyIds = await getUserCompanyIds(req.user);
-    if (!warehouse.companyId || !companyIds.includes(warehouse.companyId)) {
+    if (!sharesCompany(warehouseCompanies, companyIds)) {
       throw httpError(403, "You don't have access to this warehouse");
     }
     if (permission === "canOutward" && req.user.role !== "SALES") {
@@ -512,7 +513,7 @@ export async function getAvailableSerials(req, res) {
     const entry = await prisma.min.findUnique({ where: { id }, select: { warehouseId: true, outwardType: true, items: true } });
     if (!entry) return res.status(404).json({ message: "Outward entry not found" });
     await assertWarehouseAccess(req, entry.warehouseId, "canOutward");
-    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType: entry.outwardType, minId: id, items: entry.items });
+    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType: entry.outwardType, minId: id, items: await withSerialModes(prisma, entry.items) });
     return res.json({ data });
   } catch (error) {
     console.error("Available serials error:", error);
@@ -876,7 +877,7 @@ export async function updateOutward(req, res) {
         },
       });
       // Item rows were rewritten: keep the serial numbers that still match, drop the rest.
-      const prunedSerials = await pruneSerials(tx, id, newItems);
+      const prunedSerials = await pruneSerials(tx, id, await withSerialModes(tx, newItems));
 
       const base = {
         entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber,
@@ -1292,7 +1293,7 @@ export async function saveTransportation(req, res) {
     const serials = cleanSerials(data.serials);
     const legacyNoSerials = !isFirstTime && existing._count.serials === 0 && serials.length === 0;
     if (!legacyNoSerials) {
-      const serialProblem = validateSerials(existing.items, serials);
+      const serialProblem = validateSerials(await withSerialModes(prisma, existing.items), serials);
       if (serialProblem) return res.status(422).json({ message: serialProblem });
       // Each serial must have come in through an inward type allowed for this outward type, and not be out already.
       const serialSourceProblem = await findSerialSourceProblem(prisma, { warehouseId: existing.warehouseId, outwardType: existing.outwardType, minId: id, serials });

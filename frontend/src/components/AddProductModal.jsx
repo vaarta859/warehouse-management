@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { Loader2, Plus, X } from "lucide-react";
+import SerialModePicker from "./SerialModePicker";
 import {
   createProduct,
   selectProductSaveStatus,
@@ -36,6 +37,7 @@ export default function AddProductModal({
 
   const [category, setCategory] = useState(lockedCategory);
   const [sku, setSku] = useState("");
+  const [serialMode, setSerialMode] = useState("REQUIRED");
   const [error, setError] = useState("");
   const firstInput = useRef(null);
 
@@ -62,7 +64,12 @@ export default function AddProductModal({
     if (!cleanSku) return setError("SKU / model is required.");
 
     const result = await dispatch(
-      createProduct({ category: cleanCategory, sku: cleanSku })
+      createProduct({
+        category: cleanCategory,
+        sku: cleanSku,
+        // Adding only a model to a chosen category: it follows the category's serial rule.
+        ...(lockedCategory ? {} : { serialMode }),
+      })
     );
 
     if (createProduct.rejected.match(result)) {
@@ -73,6 +80,7 @@ export default function AddProductModal({
     const product = result.payload?.product || {
       category: cleanCategory,
       sku: cleanSku,
+      ...(lockedCategory ? {} : { serialMode }),
     };
 
     onCreated(product);
@@ -155,6 +163,11 @@ export default function AddProductModal({
               className={inputCls}
             />
           </label>
+
+          {/* Serial no. is a category setting: not asked when only a model is added to an existing category. */}
+          {!lockedCategory && (
+            <SerialModePicker value={serialMode} onChange={setSerialMode} disabled={saving} />
+          )}
 
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

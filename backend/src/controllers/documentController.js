@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { getWarehouseCompanies, allCompaniesInactive, sharesCompany } from "../utils/warehouseCompanies.js";
 import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
 import { recordAuditLog } from "../utils/auditLog.js";
 import { isFinanceSide, getUserCompanyIds, WAREHOUSE_VISIBLE_STATUSES, STATUS, outwardFolder, isAccountDocCategory, isInvoiceDocCategory, hasReleaseDocument, ACCOUNT_DOC_STATUSES, isApprovedStatus, isDispatchedStatus, syncApprovedStage } from "../utils/outwardWorkflow.js";
@@ -29,7 +30,8 @@ async function assertLinkedEntryAccess(req, linkedType, linkedId, permission = n
 
   const warehouse = entry.warehouse;
   if (!warehouse) throw Object.assign(new Error("Warehouse not found."), { status: 404 });
-  if (warehouse.company?.status === "Inactive") throw Object.assign(new Error("This warehouse belongs to an inactive company."), { status: 403 });
+  const warehouseCompanies = await getWarehouseCompanies(warehouse.id);
+  if (allCompaniesInactive(warehouseCompanies)) throw Object.assign(new Error("This warehouse belongs to an inactive company."), { status: 403 });
 
   entry.entryNumber = entry[numberField] || entry.id;
   entry.warehouseCode = warehouse.code;
@@ -46,7 +48,7 @@ async function assertLinkedEntryAccess(req, linkedType, linkedId, permission = n
   // stage, and delete them until the entry is dispatched (uploads travel with PUT /:id/account-documents).
   if (req.user.role === "ACCOUNT" && linkedType === "outward") {
     const companyIds = await getUserCompanyIds(req.user);
-    if (!warehouse.companyId || !companyIds.includes(warehouse.companyId)) {
+    if (!sharesCompany(warehouseCompanies, companyIds)) {
       throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
     }
     if (permission) {
@@ -66,7 +68,7 @@ async function assertLinkedEntryAccess(req, linkedType, linkedId, permission = n
   // documents of outward entries in their company, but never add or delete them.
   if (isFinanceSide(req.user.role)) {
     const companyIds = await getUserCompanyIds(req.user);
-    if (permission || !warehouse.companyId || !companyIds.includes(warehouse.companyId)) {
+    if (permission || !sharesCompany(warehouseCompanies, companyIds)) {
       throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
     }
     // Dispatch documents open up only after the warehouse manager has dispatched.

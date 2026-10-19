@@ -85,7 +85,6 @@ export default function Dashboard() {
     dispatch(
       fetchWarehouses({
         search: "",
-        companyId: user?.companyId || undefined,
       })
     );
 

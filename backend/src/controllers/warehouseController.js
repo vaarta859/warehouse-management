@@ -1,5 +1,14 @@
 import prisma from "../config/prisma.js";
-import { userBelongsToCompany } from "../utils/userCompanies.js";
+import { parseCompanyIds, findMissingCompanyIds, pickPrimaryCompanyId } from "../utils/userCompanies.js";
+import {
+  WAREHOUSE_COMPANIES_SELECT,
+  warehouseCompanyWhere,
+  shapeWarehouse,
+  getWarehouseCompanies,
+  allCompaniesInactive,
+  sharesCompany,
+  setWarehouseCompanies,
+} from "../utils/warehouseCompanies.js";
 import { isFinanceSide, getUserCompanyIds } from "../utils/outwardWorkflow.js";
 
 const WAREHOUSE_SELECT = {
@@ -18,8 +27,11 @@ const WAREHOUSE_SELECT = {
   // of a raw companyId (and know at a glance if the parent company is
   // Inactive, which is what's actually disabling this warehouse).
   company: {
-    select: { id: true, name: true, status: true },
+    select: { id: true, name: true, code: true, status: true },
   },
+  // Every company this warehouse is linked with (shapeWarehouse flattens it
+  // into `companies` / `companyIds`).
+  companyLinks: WAREHOUSE_COMPANIES_SELECT,
 };
 
 // ---------------------------------------------------
@@ -55,18 +67,22 @@ export async function getAllWarehouses(req, res) {
     const where = { AND: [] };
 
     if (req.user.role === "WAREHOUSE_MANAGER") {
+      // Granted warehouses that are still linked with one of the manager's companies.
+      const companyIds = await getUserCompanyIds(req.user);
       where.AND.push({
         access: {
           some: { userId: req.user.id, accessLevel: "MANAGE" },
         },
       });
+      where.AND.push(warehouseCompanyWhere(companyIds));
+      if (req.query.companyId) where.AND.push(warehouseCompanyWhere([req.query.companyId]));
     } else if (isFinanceSide(req.user.role)) {
-      // SALES / ACCOUNT: every warehouse of the companies they belong to.
+      // SALES / ACCOUNT: every warehouse linked with a company they belong to.
       const companyIds = await getUserCompanyIds(req.user);
-      where.AND.push({ companyId: { in: companyIds } });
-      if (req.query.companyId) where.AND.push({ companyId: req.query.companyId });
+      where.AND.push(warehouseCompanyWhere(companyIds));
+      if (req.query.companyId) where.AND.push(warehouseCompanyWhere([req.query.companyId]));
     } else if (req.query.companyId) {
-      where.AND.push({ companyId: req.query.companyId });
+      where.AND.push(warehouseCompanyWhere([req.query.companyId]));
     }
 
     if (search) {
@@ -86,7 +102,7 @@ export async function getAllWarehouses(req, res) {
       orderBy: { createdAt: "desc" },
     });
 
-    res.status(200).json(warehouses);
+    res.status(200).json(warehouses.map(shapeWarehouse));
   } catch (error) {
     console.error("getAllWarehouses error:", error);
     res.status(500).json({ message: "Failed to fetch warehouses" });
@@ -118,14 +134,14 @@ export async function getWarehouseById(req, res) {
       }
     }
 
-    if (isFinanceSide(req.user.role)) {
+    if (isFinanceSide(req.user.role) || req.user.role === "WAREHOUSE_MANAGER") {
       const companyIds = await getUserCompanyIds(req.user);
-      if (!warehouse.companyId || !companyIds.includes(warehouse.companyId)) {
+      if (!sharesCompany(shapeWarehouse(warehouse).companies, companyIds)) {
         return res.status(403).json({ message: "You don't have access to this warehouse" });
       }
     }
 
-    res.status(200).json(warehouse);
+    res.status(200).json(shapeWarehouse(warehouse));
   } catch (error) {
     console.error("getWarehouseById error:", error);
     res.status(500).json({ message: "Failed to fetch warehouse" });
@@ -142,7 +158,7 @@ export async function createWarehouse(req, res) {
   try {
     const { name, locality, city, state, pincode } = req.body;
 
-    const companyId = req.body.companyId;
+    const companyIds = parseCompanyIds(req.body) || [];
 
     // Report every missing required field at once (name/city/state/pincode
     // are required; locality is optional) instead of a generic message,
@@ -158,20 +174,25 @@ export async function createWarehouse(req, res) {
       });
     }
 
-    if (!companyId) {
-      return res.status(400).json({ message: "companyId is required" });
+    if (!companyIds.length) {
+      return res.status(400).json({ message: "Select at least one company" });
     }
 
-    const company = await prisma.company.findUnique({ where: { id: companyId } });
-    if (!company) {
-      return res.status(400).json({ message: "companyId does not match an existing company" });
+    const companies = await prisma.company.findMany({
+      where: { id: { in: companyIds } },
+      select: { id: true, status: true },
+    });
+    if (companies.length !== companyIds.length) {
+      return res.status(400).json({ message: "One or more selected companies do not exist" });
     }
 
-    if (company.status === "Inactive") {
+    if (companies.some((c) => c.status === "Inactive")) {
       return res.status(409).json({
-        message: "This company is inactive. Reactivate it before adding warehouses.",
+        message: "A selected company is inactive. Reactivate it before adding warehouses.",
       });
     }
+
+    const companyId = companyIds[0]; // primary company
 
     let warehouse;
     let attempt = 0;
@@ -189,6 +210,9 @@ export async function createWarehouse(req, res) {
             state: state.trim(),
             pincode: pincode.trim(),
             companyId,
+            companyLinks: {
+              create: companyIds.map((id) => ({ companyId: id })),
+            },
           },
           select: WAREHOUSE_SELECT,
         });
@@ -201,7 +225,7 @@ export async function createWarehouse(req, res) {
       }
     }
 
-    res.status(201).json(warehouse);
+    res.status(201).json(shapeWarehouse(warehouse));
   } catch (error) {
     console.error("createWarehouse error:", error);
     res.status(500).json({ message: "Failed to create warehouse" });
@@ -215,14 +239,31 @@ export async function createWarehouse(req, res) {
 export async function updateWarehouse(req, res) {
   try {
     const { id } = req.params;
-    const { name, locality, city, state, pincode, companyId } = req.body;
+    const { name, locality, city, state, pincode } = req.body;
+    const companyIds =
+      req.user.role === "SUPER_ADMIN" ? parseCompanyIds(req.body) : undefined;
 
     const existing = await prisma.warehouse.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ message: "Warehouse not found" });
     }
 
-    const warehouse = await prisma.warehouse.update({
+    if (companyIds !== undefined) {
+      if (!companyIds.length) {
+        return res.status(400).json({ message: "Select at least one company" });
+      }
+      const missing = await findMissingCompanyIds(companyIds);
+      if (missing.length) {
+        return res.status(400).json({ message: "One or more selected companies do not exist" });
+      }
+    }
+
+    const warehouse = await prisma.$transaction(async (tx) => {
+      if (companyIds !== undefined) {
+        await setWarehouseCompanies(tx, id, companyIds);
+      }
+
+      return tx.warehouse.update({
       where: { id },
       data: {
         ...(name !== undefined && { name }),
@@ -230,12 +271,15 @@ export async function updateWarehouse(req, res) {
         ...(city !== undefined && { city }),
         ...(state !== undefined && { state }),
         ...(pincode !== undefined && { pincode }),
-        ...(req.user.role === "SUPER_ADMIN" && companyId !== undefined && { companyId }),
+        ...(companyIds !== undefined && {
+          companyId: pickPrimaryCompanyId(companyIds, existing.companyId),
+        }),
       },
       select: WAREHOUSE_SELECT,
+      });
     });
 
-    res.status(200).json(warehouse);
+    res.status(200).json(shapeWarehouse(warehouse));
   } catch (error) {
     console.error("updateWarehouse error:", error);
     if (error.code === "P2025") {
@@ -254,17 +298,14 @@ async function toggleField(req, res, field) {
   try {
     const { id } = req.params;
 
-    const existing = await prisma.warehouse.findUnique({
-      where: { id },
-      include: { company: { select: { status: true } } },
-    });
+    const existing = await prisma.warehouse.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ message: "Warehouse not found" });
     }
 
-    // Company status is the parent/master switch. While the company is
-    // inactive, warehouse operation status cannot be changed.
-    if (existing.company && existing.company.status === "Inactive") {
+    // Company status is the parent/master switch. While every linked company
+    // is inactive, warehouse operation status cannot be changed.
+    if (allCompaniesInactive(await getWarehouseCompanies(id))) {
       return res.status(409).json({
         message: `Can't change ${field} while the parent company is inactive. Activate the company first.`,
       });
@@ -276,7 +317,7 @@ async function toggleField(req, res, field) {
       select: WAREHOUSE_SELECT,
     });
 
-    res.status(200).json(warehouse);
+    res.status(200).json(shapeWarehouse(warehouse));
   } catch (error) {
     console.error(`toggle${field} error:`, error);
     res.status(500).json({ message: `Failed to update warehouse ${field.toLowerCase()} status` });
@@ -394,9 +435,11 @@ export async function grantWarehouseAccess(req, res) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (!(await userBelongsToCompany(targetUser, warehouse.companyId))) {
+    // The user must share at least one company with the warehouse.
+    const targetCompanyIds = await getUserCompanyIds(targetUser);
+    if (!sharesCompany(await getWarehouseCompanies(warehouseId), targetCompanyIds)) {
       return res.status(400).json({
-        message: "This user doesn't belong to the same company as the warehouse",
+        message: "This user doesn't belong to any company this warehouse is linked with",
       });
     }
 

@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { getWarehouseCompanies, sharesCompany } from "../utils/warehouseCompanies.js";
 import { getUserCompanyIds, outwardFolder, tempProofFolder } from "../utils/outwardWorkflow.js";
 import {
   supabase,
@@ -100,7 +101,7 @@ export async function uploadFile(
       return res.status(404).json({ message: "Warehouse not found" });
     }
 
-    if (companyIds && (!warehouse.companyId || !companyIds.includes(warehouse.companyId))) {
+    if (companyIds && !sharesCompany(await getWarehouseCompanies(warehouse.id), companyIds)) {
       return res.status(403).json({ message: "You don't have access to this warehouse" });
     }
 

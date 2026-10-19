@@ -57,8 +57,10 @@ export default function StockLedger() {
   const companyOptions = useMemo(() => {
     const seen = new Map();
     warehouses.forEach((w) => {
-      const id = w.companyId || w.company?.id;
-      if (id && !seen.has(id)) seen.set(id, { id, name: w.company?.name || "Company" });
+      const linked = w.companies?.length ? w.companies : w.company?.id ? [w.company] : [];
+      linked.forEach((c) => {
+        if (c?.id && !seen.has(c.id)) seen.set(c.id, { id: c.id, name: c.name || "Company" });
+      });
     });
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [warehouses]);
@@ -66,7 +68,7 @@ export default function StockLedger() {
   const warehouseOptions = useMemo(() => {
     if (!companyId) return [];
     return warehouses
-      .filter((w) => (w.companyId || w.company?.id) === companyId)
+      .filter((w) => (w.companyIds?.length ? w.companyIds : [w.companyId || w.company?.id]).includes(companyId))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [warehouses, companyId]);
 

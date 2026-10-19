@@ -38,6 +38,8 @@ export function validateInwardSerials(items, serials, { allowEmpty = false } = {
 
   for (const [key, line] of lines) {
     const have = counts.get(key) || 0;
+    // OPTIONAL: all units or none. REQUIRED: all units.
+    if (line.serialMode === "OPTIONAL" && have === 0) continue;
     if (have !== line.quantity) {
       return `${line.sku}: ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} needed, ${have} entered`;
     }

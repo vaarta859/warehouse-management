@@ -141,12 +141,21 @@ export async function signup(req, res) {
       if (warehouseIds.length) {
         const warehouses = await prisma.warehouse.findMany({
           where: { id: { in: warehouseIds } },
-          select: { id: true, companyId: true },
+          select: {
+            id: true,
+            companyId: true,
+            companyLinks: { select: { companyId: true } },
+          },
         });
 
+        // A warehouse is allowed when it is linked with any of the user's companies
         const validIds = new Set(
           warehouses
-            .filter((w) => companyIds.includes(w.companyId))
+            .filter(
+              (w) =>
+                companyIds.includes(w.companyId) ||
+                w.companyLinks.some((l) => companyIds.includes(l.companyId))
+            )
             .map((w) => w.id)
         );
 
@@ -513,7 +522,15 @@ export async function updateUserRole(req, res) {
         await tx.warehouseAccess.deleteMany({
           where: {
             userId: targetUser.id,
-            warehouse: { companyId: { notIn: resolvedIds } },
+            // keep access only to warehouses still linked with one of the user's companies
+            NOT: {
+              warehouse: {
+                OR: [
+                  { companyId: { in: resolvedIds } },
+                  { companyLinks: { some: { companyId: { in: resolvedIds } } } },
+                ],
+              },
+            },
           },
         });
       }

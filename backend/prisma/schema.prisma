@@ -32,6 +32,16 @@ enum CostStatus {
   PENDING
 }
 
+// Serial number rule of a product (set when the category / model is added).
+//   REQUIRED     - every unit needs a serial no.; the scan box is shown on inward / outward and must be filled
+//   NOT_REQUIRED - no serial numbers; no scan box is shown
+//   OPTIONAL     - scan box is shown; the manager may scan all units of the item, or none
+enum SerialMode {
+  REQUIRED
+  NOT_REQUIRED
+  OPTIONAL
+}
+
 enum AccessLevel {
   NONE
   MANAGE
@@ -58,6 +68,9 @@ model Company {
 
   // Customers saved for this company (shared by every user of the company).
   customers Customer[]
+
+  // Every warehouse linked with this company (a warehouse can have many companies).
+  warehouseLinks WarehouseCompanyLink[]
 }
 
 // Customer names added with "+ Add" on the outward form. One list per company, shown to every user of the company.
@@ -89,8 +102,12 @@ model Warehouse {
 
   createdAt DateTime @default(now())
 
+  // Primary company. Always one of the companies in `companyLinks` below.
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
+
+  // All companies this warehouse is linked with.
+  companyLinks WarehouseCompanyLink[]
 
   access    WarehouseAccess[]
   grns      Grn[]
@@ -137,6 +154,19 @@ model UserCompany {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@id([userId, companyId])
+  @@index([companyId])
+}
+
+// Join table: which companies a warehouse is linked with (many-to-many).
+model WarehouseCompanyLink {
+  warehouseId String
+  companyId   String
+  createdAt   DateTime @default(now())
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([warehouseId, companyId])
   @@index([companyId])
 }
 
@@ -438,9 +468,10 @@ model AuditLog {
 }
 
 model Product {
-  id        String   @id @default(uuid())
-  category  String
-  sku       String
+  id         String     @id @default(uuid())
+  category   String
+  sku        String
+  serialMode SerialMode @default(REQUIRED)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -483,3 +514,5 @@ model GrnSerial {
   @@index([serialNo])
   @@index([grnId, category, sku])
 }
+
+
