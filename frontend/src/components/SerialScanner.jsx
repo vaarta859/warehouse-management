@@ -63,7 +63,7 @@ const cameraSerial = (raw, stock) => {
 
 const SOURCE_LABEL = { CAMERA: "camera", SCANNER: "scanner", MANUAL: "typed" };
 
-export default function useSerialScanner({ items = [], lines = [], values = {}, onChange, disabled = false, suggestions = null }) {
+export default function useSerialScanner({ items = [], lines = [], values = {}, onChange, disabled = false, suggestions = null, blocked = null }) {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [lastScan, setLastScan] = useState("");
   const [camInfo, setCamInfo] = useState(null); // small status line: reader type, frames checked
@@ -96,7 +96,7 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
   }, [items]);
 
   const live = useRef({});
-  live.current = { lines, values, onChange, rows, items, suggestions };
+  live.current = { lines, values, onChange, rows, items, suggestions, blocked };
 
   const total = lines.reduce((n, l) => n + l.quantity, 0);
   const filled = lines.reduce((n, l) => n + countFilled(values, l.key), 0);
@@ -110,7 +110,7 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
    * on), goes on to the next items when that one is full - unless `onlyRow` is set (typed into one item).
    */
   const addSerial = (raw, source, startRow = activeRow.current, onlyRow = false) => {
-    const { lines: L, values: V, onChange: change, rows: R, items: I, suggestions: S } = live.current;
+    const { lines: L, values: V, onChange: change, rows: R, items: I, suggestions: S, blocked: B } = live.current;
     // A label barcode can hold "MODEL SERIAL": keep only the serial (checked against what is in stock for the item).
     const target = startRow != null ? R[startRow] : null;
     const stockForScan = target && S ? S[target.key] : null;
@@ -120,9 +120,11 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
     if (!serialNo) return false;
     // Dispatch: only serials that are really available (in this warehouse's stock for the item and not already dispatched
     // in another outward entry) can be added. Anything else is refused right at the scan.
-    const stockForRow = target && S ? S[target.key] : null;
-    if (stockForRow && !stockForRow.some((sn) => cleanSerialInput(sn).toLowerCase() === serialNo.toLowerCase())) {
-      toast.warn(`${serialNo} cannot be added: it is already dispatched, or it is not in stock for this item.`);
+    // A serial that is not on an inward entry can still be scanned and sent; only one that is already dispatched /
+    // added to another outward is refused (the server checks again on save).
+    const blockedForRow = target && B ? B[target.key] : null;
+    if (blockedForRow && blockedForRow.some((sn) => cleanSerialInput(sn).toLowerCase() === serialNo.toLowerCase())) {
+      toast.warn(`${serialNo} cannot be added: it is already dispatched, or already added to another outward.`);
       return false;
     }
     const exists = L.some((l) => (V[l.key] || []).some((s) => cleanSerialInput(s.serialNo).toLowerCase() === serialNo.toLowerCase()));
@@ -260,16 +262,16 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
       if (text === lastDecoded.current.text && now - lastDecoded.current.at < 2000) return;
       lastDecoded.current = { text, at: now };
       // Shown INSIDE the camera pop-up (the centre messages can sit behind it), so it is always clear what was read.
-      const { rows: R, suggestions: S } = live.current;
+      const { rows: R, suggestions: S, blocked: B } = live.current;
       const t = activeRow.current;
       const stock = t != null && R[t] && S ? S[R[t].key] : null;
       const serial = cameraSerial(text, stock);
-      const notInStock = stock && !stock.some((sn) => cleanSerialInput(sn).toLowerCase() === serial.toLowerCase());
+      const notInStock = t != null && R[t] && B && (B[R[t].key] || []).some((sn) => cleanSerialInput(sn).toLowerCase() === serial.toLowerCase());
       if (addToSelectedRef.current(text, "CAMERA")) {
         setCamNote({ ok: true, text: `Read: ${serial}` });
         beep();
       } else {
-        setCamNote({ ok: false, text: notInStock ? `Read: ${serial} - NOT added: it is not in stock for this item (or already dispatched). Check that the label belongs to the selected item.` : `Read: ${serial} - not added (already entered, or the item is full).` });
+        setCamNote({ ok: false, text: notInStock ? `Read: ${serial} - NOT added: it is already dispatched, or already added to another outward.` : `Read: ${serial} - not added (already entered, or the item is full).` });
       }
     };
 
@@ -327,7 +329,7 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
     if (!text) return toast.warn("No barcode found in the photo. Take it closer, flat, sharp and well lit, then try again.");
     lastDecoded.current = { text, at: Date.now() };
     if (addToSelectedRef.current(text, "CAMERA")) { setCamNote({ ok: true, text: `Read: ${cameraSerial(text, null)}` }); beep(); }
-    else setCamNote({ ok: false, text: `Read: ${cameraSerial(text, null)} - not added (not in stock for this item, already entered, or the item is full).` });
+    else setCamNote({ ok: false, text: `Read: ${cameraSerial(text, null)} - not added (already dispatched, already entered, or the item is full).` });
   };
 
   // Tap the picture: focus again on that spot (phones that support it), then back to continuous focus.
@@ -420,7 +422,7 @@ export default function useSerialScanner({ items = [], lines = [], values = {}, 
         {stockList && dropOpen === rowIndex && (
           <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
             <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-              {available.length ? `In stock (${available.length})` : stockList.length ? "No matching serial no. in stock" : "No serial no. in stock for this item"}
+              {available.length ? `In stock (${available.length})` : stockList.length ? "No matching serial no. in stock - you can still type or scan it" : "No serial no. in stock - scan or type to add"}
             </div>
             {available.slice(0, 60).map((sn) => (
               <button

@@ -29,7 +29,7 @@ export function validateInwardSerials(items, serials, { allowEmpty = false } = {
     if (s.serialNo.length > MAX_SERIAL_LENGTH) return `Serial number "${s.serialNo.slice(0, 20)}..." is too long`;
     if (/\s/.test(s.serialNo)) return `Serial number "${s.serialNo}" must not contain spaces`;
     const key = serialKey(s.category, s.sku);
-    if (!lines.has(key)) return `Serial number "${s.serialNo}" does not belong to any Pcs item of this entry`;
+    if (!lines.has(key)) return `Serial number "${s.serialNo}" does not belong to an item of this entry that takes serial numbers (${s.sku}: serial no. is Not required, or the item is not counted in Pcs)`;
     const unique = s.serialNo.toLowerCase();
     if (seen.has(unique)) return `Serial number "${s.serialNo}" is entered more than once`;
     seen.add(unique);
@@ -45,6 +45,56 @@ export function validateInwardSerials(items, serials, { allowEmpty = false } = {
     }
   }
   return null;
+}
+
+const LEFT_STATUSES = ["DISPATCHED", "DELIVERED"];
+
+/**
+ * A serial number that is already in stock cannot be received again. It may come in again only after the
+ * unit has really left (its outward entry is dispatched) since it last came in - e.g. a sold unit that
+ * returns as faulty stock. Serials already saved on this entry are not checked again when it is edited.
+ * Error message, or null. `db` is prisma or a transaction client.
+ */
+export async function findInwardSerialProblem(db, { grnId = null, serials }) {
+  if (!serials.length) return null;
+  const match = serials.map((s) => ({ serialNo: { equals: s.serialNo, mode: "insensitive" } }));
+
+  const [received, left, own] = await Promise.all([
+    db.grnSerial.findMany({
+      where: { OR: match, ...(grnId ? { grnId: { not: grnId } } : {}) },
+      select: { serialNo: true, category: true, sku: true, grn: { select: { grnNumber: true, createdAt: true } } },
+    }),
+    db.minSerial.findMany({
+      where: { OR: match, min: { status: { in: LEFT_STATUSES } } },
+      select: { serialNo: true, category: true, sku: true, min: { select: { createdAt: true, dispatchedAt: true } } },
+    }),
+    grnId ? db.grnSerial.findMany({ where: { grnId }, select: { serialNo: true, category: true, sku: true } }) : [],
+  ]);
+
+  const same = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+  const ownKeys = new Set(own.map((o) => `${serialKey(o.category, o.sku)}|${o.serialNo.toLowerCase()}`));
+  const problems = [];
+
+  for (const s of serials) {
+    const key = serialKey(s.category, s.sku);
+    if (ownKeys.has(`${key}|${s.serialNo.toLowerCase()}`)) continue; // already on this entry
+
+    const earlier = received.filter((r) => same(r.serialNo, s.serialNo) && serialKey(r.category, r.sku) === key);
+    if (!earlier.length) continue;
+    const lastIn = earlier.reduce((a, b) => (new Date(b.grn.createdAt) > new Date(a.grn.createdAt) ? b : a));
+
+    const wentOutAfter = left.some(
+      (l) =>
+        same(l.serialNo, s.serialNo) &&
+        serialKey(l.category, l.sku) === key &&
+        new Date(l.min.dispatchedAt || l.min.createdAt) > new Date(lastIn.grn.createdAt)
+    );
+    if (!wentOutAfter) problems.push(`"${s.serialNo}" is already in stock (inward ${lastIn.grn.grnNumber})`);
+  }
+
+  if (!problems.length) return null;
+  const more = problems.length > 5 ? ` (and ${problems.length - 5} more)` : "";
+  return `${problems.slice(0, 5).join("; ")}${more}. A serial number can come in again only after it has been dispatched.`;
 }
 
 /** Replaces all serials of an inward entry. */

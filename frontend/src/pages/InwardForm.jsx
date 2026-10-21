@@ -202,7 +202,6 @@ export default function InwardForm() {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => needsSerials(item) && item.category && String(item.sku || "").trim() && Number(item.quantity) > 0);
   // An entry saved before serial numbers existed (none saved) can still be edited without them.
-  const [hadNoSerials, setHadNoSerials] = useState(false);
 
   const [remarks, setRemarks] = useState("");
 
@@ -315,7 +314,6 @@ export default function InwardForm() {
       const loadedItems = (x.items || []).map((i) => ({ id: crypto.randomUUID(), category: i.category || "", companyName: i.companyName || "", sku: i.sku || "", quantity: String(i.quantity ?? ""), uom: i.uom || "Pcs" }));
       setItems(loadedItems);
       setSerialValues(initialSerialValues(buildSerialLines(withSerialMode(loadedItems, products)), x.serials || []));
-      setHadNoSerials(!(x.serials || []).length);
       setRemarks(x.remarks || "");
       if (Array.isArray(x.documents) && x.documents.length) {
         setDocuments(buildDocumentRows(x.documents));
@@ -585,8 +583,8 @@ export default function InwardForm() {
     }
 
     // Every Pcs unit needs its own serial number (an item of 5 Pcs needs 5).
-    const noSerialsEntered = serialPayload(serialLines, serialValues).length === 0;
-    const serialError = isEdit && hadNoSerials && noSerialsEntered ? null : serialProblem(serialLines, serialValues);
+    // Same rule when creating and when updating: a Required item must have all its serial numbers.
+    const serialError = serialProblem(serialLines, serialValues);
     if (serialError) {
       toast.error(serialError);
       return;

@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronDown, PackageMinus, PackagePlus, Search, Warehouse } from "lucide-react";
 
-import { fetchWarehouses, selectWarehouses } from "../features/warehouse/warehouseSlice";
+import { fetchWarehouses, selectWarehouses, selectSelectedWarehouse } from "../features/warehouse/warehouseSlice";
 import {
   fetchStockLedger,
   selectStockLedger,
@@ -33,6 +33,12 @@ export default function StockLedger() {
   const dispatch = useDispatch();
 
   const warehouses = useSelector(selectWarehouses);
+  const user = useSelector((state) => state.auth.user);
+  const navbarWarehouse = useSelector(selectSelectedWarehouse);
+
+  // A warehouse manager sees only the warehouse chosen in the navbar; switching it there switches the
+  // stock shown here. Everyone else picks company / warehouse on this page.
+  const isManager = user?.role === "WAREHOUSE_MANAGER";
   const rows = useSelector(selectStockLedger);
   const totals = useSelector(selectStockLedgerTotals);
   const pagination = useSelector(selectStockLedgerPagination);
@@ -54,16 +60,25 @@ export default function StockLedger() {
     dispatch(fetchWarehouses({}));
   }, [dispatch]);
 
+  // Super admin: every company. Sales / Account / Warehouse manager: only the companies they belong to
+  // (a warehouse they use may also be linked with other companies, which they must not see).
+  const myCompanyIds = useMemo(() => {
+    if (user?.role === "SUPER_ADMIN") return null;
+    return new Set([...(user?.companies || []).map((c) => c.id), user?.companyId].filter(Boolean));
+  }, [user]);
+
   const companyOptions = useMemo(() => {
     const seen = new Map();
     warehouses.forEach((w) => {
       const linked = w.companies?.length ? w.companies : w.company?.id ? [w.company] : [];
       linked.forEach((c) => {
-        if (c?.id && !seen.has(c.id)) seen.set(c.id, { id: c.id, name: c.name || "Company" });
+        if (!c?.id || seen.has(c.id)) return;
+        if (myCompanyIds && myCompanyIds.size && !myCompanyIds.has(c.id)) return;
+        seen.set(c.id, { id: c.id, name: c.name || "Company" });
       });
     });
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [warehouses]);
+  }, [warehouses, myCompanyIds]);
 
   const warehouseOptions = useMemo(() => {
     if (!companyId) return [];
@@ -75,8 +90,12 @@ export default function StockLedger() {
   const selectedCompany = companyOptions.find((c) => c.id === companyId);
   const selectedWarehouse = warehouseOptions.find((w) => w.id === warehouseId);
 
-  const scopeLabel = selectedWarehouse
-    ? `${selectedWarehouse.name}${selectedWarehouse.code ? ` (${selectedWarehouse.code})` : ""}`
+  const scopeLabel = isManager
+    ? navbarWarehouse
+      ? `${navbarWarehouse.name}${navbarWarehouse.code ? ` (${navbarWarehouse.code})` : ""}`
+      : "Select a warehouse"
+    : selectedWarehouse
+    ? `${selectedCompany ? `${selectedCompany.name} - ` : ""}${selectedWarehouse.name}${selectedWarehouse.code ? ` (${selectedWarehouse.code})` : ""}`
     : selectedCompany
       ? `${selectedCompany.name} - all warehouses`
       : "Total stock - all warehouses";
@@ -98,9 +117,12 @@ export default function StockLedger() {
     setPage(1);
   };
 
+  const scopeWarehouseId = isManager ? navbarWarehouse?.id : warehouseId || undefined;
+  const scopeCompanyId = isManager ? undefined : companyId || undefined;
+
   const ledgerParams = {
-    warehouseId: warehouseId || undefined,
-    companyId: companyId || undefined,
+    warehouseId: scopeWarehouseId,
+    companyId: scopeCompanyId,
     search,
     page,
     pageSize: 20,
@@ -114,11 +136,13 @@ export default function StockLedger() {
   // Debounce search so every keystroke doesn't fire a request. Always loads:
   // with no company / warehouse chosen it is the total stock.
   useEffect(() => {
+    // A manager's warehouse is not known yet: wait (never fall back to "all warehouses").
+    if (isManager && !scopeWarehouseId) return undefined;
     const timer = setTimeout(() => {
       dispatch(
         fetchStockLedger({
-          warehouseId: warehouseId || undefined,
-          companyId: companyId || undefined,
+          warehouseId: scopeWarehouseId,
+          companyId: scopeCompanyId,
           search,
           page,
           pageSize: 20,
@@ -126,7 +150,12 @@ export default function StockLedger() {
       );
     }, 300);
     return () => clearTimeout(timer);
-  }, [dispatch, warehouseId, companyId, search, page]);
+  }, [dispatch, isManager, scopeWarehouseId, scopeCompanyId, search, page]);
+
+  // Switching warehouse in the navbar starts again from page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [navbarWarehouse?.id]);
 
   const selectCls =
     "w-full appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400";
@@ -166,6 +195,7 @@ export default function StockLedger() {
             Nothing chosen = total stock.
         ================================================= */}
 
+        {!isManager && (
         <div className="mb-6 grid grid-cols-1 items-end gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-[1fr_1fr_auto]">
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-black">Company</label>
@@ -207,6 +237,7 @@ export default function StockLedger() {
             Show total stock
           </button>
         </div>
+        )}
 
         <>
             {/* =============================================

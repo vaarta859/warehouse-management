@@ -531,7 +531,6 @@ export default function Outward() {
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">w-id</th>
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outward type</th>
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Customer</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Quantity</th>
                     {showCost && <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">PI amount</th>}
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Date & time</th>
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Status</th>
@@ -550,10 +549,6 @@ export default function Outward() {
                       </td>
                       <td className="px-5 py-4">
                         <span className="text-xs font-medium text-gray-800">{item.party}</span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="text-sm font-semibold text-gray-800">{item.quantity}</span>
-                        <span className="ml-1 text-[11px] text-gray-400">pcs</span>
                       </td>
                       {showCost && (
                         <td className="px-5 py-4">
@@ -678,8 +673,6 @@ export default function Outward() {
 
                         <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-gray-400">
                           <span>{item.time}</span>
-                          <span>·</span>
-                          <span>{item.quantity} pcs</span>
                           {showCost && (
                             <>
                               <span>·</span>

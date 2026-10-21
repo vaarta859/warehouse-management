@@ -93,11 +93,22 @@ export async function findSerialSourceProblem(db, { warehouseId, outwardType, mi
   ]);
 
   const problems = [];
+  const usedProblems = [];
   for (const s of serials) {
     const key = serialKey(s.category, s.sku);
     const received = inwardRows.filter((r) => sameSerial(r.serialNo, s.serialNo) && serialKey(r.category, r.sku) === key);
     if (!received.length) {
-      problems.push(`"${s.serialNo}" is not in this warehouse's inward stock for ${s.sku}`);
+      // Not recorded on any inward entry of this warehouse: the manager may still scan it and send it on, but it
+      // must not be a unit that is already added to / dispatched in another outward entry.
+      const usedAlready = outwardRows.filter((r) => sameSerial(r.serialNo, s.serialNo) && serialKey(r.category, r.sku) === key);
+      if (usedAlready.length) {
+        const last = usedAlready.reduce((a, b) => (new Date(b.min.createdAt) > new Date(a.min.createdAt) ? b : a));
+        usedProblems.push(
+          DISPATCHED_STATUSES.includes(last.min.status)
+            ? `"${s.serialNo}" is already dispatched in outward ${last.min.outwardNumber}`
+            : `"${s.serialNo}" is already added to outward ${last.min.outwardNumber}, which is not dispatched yet`
+        );
+      }
       continue;
     }
     const eligible = received.filter((r) => allowed.includes(canonicalInwardType(r.grn.inwardType)));
@@ -121,10 +132,18 @@ export async function findSerialSourceProblem(db, { warehouseId, outwardType, mi
     }
   }
 
-  if (!problems.length) return null;
-  const shown = problems.slice(0, 5).join("; ");
-  const more = problems.length > 5 ? ` (and ${problems.length - 5} more)` : "";
-  return `${outwardLabel} accepts serial numbers only from ${allowed.join(" or ")}: ${shown}${more}`;
+  if (!problems.length && !usedProblems.length) return null;
+  const parts = [];
+  if (problems.length) {
+    const shown = problems.slice(0, 5).join("; ");
+    const more = problems.length > 5 ? ` (and ${problems.length - 5} more)` : "";
+    parts.push(`${outwardLabel} accepts serial numbers only from ${allowed.join(" or ")}: ${shown}${more}`);
+  }
+  if (usedProblems.length) {
+    const more = usedProblems.length > 5 ? ` (and ${usedProblems.length - 5} more)` : "";
+    parts.push(`${usedProblems.slice(0, 5).join("; ")}${more}`);
+  }
+  return parts.join(". ");
 }
 
 /**
@@ -174,6 +193,42 @@ export async function listAvailableSerials(db, { warehouseId, outwardType, minId
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
     result[key].push(r.serialNo);
+  }
+  Object.values(result).forEach((list) => list.sort(compareSerials));
+  return result;
+}
+
+/**
+ * Serial numbers of these items that cannot be scanned again: already added to another (not rejected) outward entry
+ * and not received again since. Works for serials that were never on an inward entry too. Returns the same shape as
+ * listAvailableSerials: { [serialKey(category, sku)]: [serialNo, ...] }.
+ */
+export async function listBlockedSerials(db, { minId, items, available = {} }) {
+  const lines = [...requiredSerialLines(items).values()];
+  const result = {};
+  lines.forEach((l) => { result[serialKey(l.category, l.sku)] = []; });
+  if (!lines.length) return result;
+
+  const usedRows = await db.minSerial.findMany({
+    where: {
+      minId: { not: minId },
+      min: { status: { not: "REJECTED" } },
+      OR: lines.map((l) => ({ category: { equals: l.category, mode: "insensitive" }, sku: { equals: l.sku, mode: "insensitive" } })),
+    },
+    select: { serialNo: true, category: true, sku: true },
+    take: 50000,
+  });
+
+  const seen = new Set();
+  for (const u of usedRows) {
+    const key = serialKey(u.category, u.sku);
+    if (!result[key]) continue;
+    const lower = u.serialNo.toLowerCase();
+    if (seen.has(`${key}|${lower}`)) continue;
+    seen.add(`${key}|${lower}`);
+    // it is available again when it came in again after it left
+    if ((available[key] || []).some((sn) => sn.toLowerCase() === lower)) continue;
+    result[key].push(u.serialNo);
   }
   Object.values(result).forEach((list) => list.sort(compareSerials));
   return result;

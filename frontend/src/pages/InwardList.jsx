@@ -774,10 +774,6 @@ export default function Inward() {
                     </th>
 
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                      Quantity
-                    </th>
-
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                       Date & time
                     </th>
 
@@ -822,15 +818,7 @@ export default function Inward() {
                         </span>
                       </td>
 
-                      <td className="px-5 py-4">
-                        <span className="text-sm font-semibold text-gray-800">
-                          {item.quantity}
-                        </span>
 
-                        <span className="ml-1 text-[11px] text-gray-400">
-                          pcs
-                        </span>
-                      </td>
 
                       <td className="px-5 py-4">
                         <p className="text-xs text-gray-700">
@@ -1013,12 +1001,6 @@ export default function Inward() {
                           <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-gray-400">
                             <span>
                               {item.time}
-                            </span>
-
-                            <span>·</span>
-
-                            <span>
-                              {item.quantity} pcs
                             </span>
 
                             {item.serials > 0 && (

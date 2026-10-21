@@ -8,7 +8,7 @@ import { outwardFolder } from "../utils/outwardWorkflow.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
 import { getWarehouseStock, findShortages, shortageMessage } from "../utils/stock.js";
 import { cleanSerials, validateSerials, replaceSerials, pruneSerials } from "../utils/serials.js";
-import { findSerialSourceProblem, listAvailableSerials } from "../utils/serialSources.js";
+import { findSerialSourceProblem, listAvailableSerials, listBlockedSerials } from "../utils/serialSources.js";
 import {
   STATUS,
   SALES_EDITABLE_STATUSES,
@@ -513,8 +513,12 @@ export async function getAvailableSerials(req, res) {
     const entry = await prisma.min.findUnique({ where: { id }, select: { warehouseId: true, outwardType: true, items: true } });
     if (!entry) return res.status(404).json({ message: "Outward entry not found" });
     await assertWarehouseAccess(req, entry.warehouseId, "canOutward");
-    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType: entry.outwardType, minId: id, items: await withSerialModes(prisma, entry.items) });
-    return res.json({ data });
+    const items = await withSerialModes(prisma, entry.items);
+    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType: entry.outwardType, minId: id, items });
+    // `blocked`: already dispatched / added to another outward (refused at the scan). Any other serial can be scanned,
+    // even when it is not on an inward entry.
+    const blocked = await listBlockedSerials(prisma, { minId: id, items, available: data });
+    return res.json({ data, blocked });
   } catch (error) {
     console.error("Available serials error:", error);
     return res.status(error.status || 500).json({ message: error.message || "Failed to fetch available serial numbers" });
@@ -877,7 +881,15 @@ export async function updateOutward(req, res) {
         },
       });
       // Item rows were rewritten: keep the serial numbers that still match, drop the rest.
-      const prunedSerials = await pruneSerials(tx, id, await withSerialModes(tx, newItems));
+      const serialItems = await withSerialModes(tx, newItems);
+      const hadSerials = (await tx.minSerial.count({ where: { minId: id } })) > 0;
+      const prunedSerials = await pruneSerials(tx, id, serialItems);
+      if (hadSerials) {
+        // Serial numbers were already scanned: the edited items must still have all the serial numbers they need.
+        const kept = await tx.minSerial.findMany({ where: { minId: id }, select: { category: true, sku: true, serialNo: true } });
+        const problem = validateSerials(serialItems, kept);
+        if (problem) throw httpError(422, `${problem}. Scan the serial numbers again on the Transportation page after changing the items.`);
+      }
 
       const base = {
         entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber,
@@ -1289,9 +1301,9 @@ export async function saveTransportation(req, res) {
     const isFirstTime = !existing.transportSubmittedAt;
 
     // Serial numbers: one for every Pcs unit, scanned on this form and shared with the account team.
-    // Entries whose transportation form was submitted before this feature (no serials saved) can still be corrected without them.
+    // Same rule on first save and on update: Required items need all their serial numbers, Optional all or none.
     const serials = cleanSerials(data.serials);
-    const legacyNoSerials = !isFirstTime && existing._count.serials === 0 && serials.length === 0;
+    const legacyNoSerials = false;
     if (!legacyNoSerials) {
       const serialProblem = validateSerials(await withSerialModes(prisma, existing.items), serials);
       if (serialProblem) return res.status(422).json({ message: serialProblem });
@@ -1311,6 +1323,8 @@ export async function saveTransportation(req, res) {
       if (!count) throw httpError(409, "This entry was just updated by someone else");
       if (!legacyNoSerials) {
         // Re-check inside the transaction so two entries cannot take the same serial number.
+        // The lock makes two saves for the same warehouse go one after the other.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${existing.warehouseId}))`;
         const clash = await findSerialSourceProblem(tx, { warehouseId: existing.warehouseId, outwardType: existing.outwardType, minId: id, serials });
         if (clash) throw httpError(422, clash);
         await replaceSerials(tx, id, serials);

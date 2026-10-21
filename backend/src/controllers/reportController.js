@@ -1,6 +1,6 @@
 import prisma from "../config/prisma.js";
 import { warehouseIdsForCompanies } from "../utils/warehouseCompanies.js";
-import { isFinanceSide, getFinanceWarehouseIds } from "../utils/outwardWorkflow.js";
+import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
  
 /**
  * =========================================================
@@ -284,8 +284,10 @@ export async function getReportLedger(req, res) {
  *
  * What it covers depends on what is asked for:
  *   - warehouseId         -> that one warehouse
- *   - companyId only      -> every warehouse of that company
- *   - neither             -> total stock: every warehouse the caller can see
+ *   - companyId only      -> that company's stock in all its warehouses
+ *   - company + warehouse -> that company's stock in that one warehouse
+ *   - neither             -> total stock: every warehouse the caller can see (Sales / Account only get
+ *                            the entries of their own companies)
  *                            (all of them for SUPER_ADMIN, only the ones a
  *                            WAREHOUSE_MANAGER holds a MANAGE grant on)
  * A manager asking for a warehouse they don't manage gets a 403.
@@ -301,10 +303,34 @@ export async function getStockLedger(req, res) {
 
     // Company chosen but no warehouse: narrow to that company's warehouses
     // (still only ones the caller may see).
-    if (!warehouseId && companyId) {
-      warehouseIds = await warehouseIdsForCompanies([companyId], warehouseIds);
+    // A warehouse can be shared by several companies, so a company's stock is the entries made for that
+    // company (not everything inside its warehouses). Sales / Account / Warehouse manager only ever see
+    // the companies they belong to; the super admin sees every company.
+    const restricted = req.user.role !== "SUPER_ADMIN";
+    const myCompanyIds = restricted ? await getUserCompanyIds(req.user) : null;
+
+    if (companyId && restricted && !myCompanyIds.includes(companyId)) {
+      return res.status(403).json({ message: "You don't have access to this company" });
     }
- 
+
+    let companyFilter = {};
+    // Sales / Account are limited to their companies' entries even with no company chosen. A warehouse
+    // manager looking at a warehouse they manage sees that whole warehouse (unless they pick a company).
+    if (companyId || isFinanceSide(req.user.role)) {
+      const ids = companyId ? [companyId] : myCompanyIds;
+      const companies = await prisma.company.findMany({ where: { id: { in: ids } }, select: { name: true } });
+      if (companyId && !companies.length) {
+        return res.status(404).json({ message: "Company not found" });
+      }
+      companyFilter = {
+        OR: companies.map((c) => ({ companyName: { equals: c.name.trim(), mode: "insensitive" } })),
+      };
+      // Company chosen but no warehouse: narrow to that company's warehouses (still only ones the caller may see).
+      if (companyId && !warehouseId) {
+        warehouseIds = await warehouseIdsForCompanies([companyId], warehouseIds);
+      }
+    }
+
     const searchWhere = search
       ? {
           OR: [
@@ -317,12 +343,13 @@ export async function getStockLedger(req, res) {
     const [inwardGroups, outwardGroups] = await Promise.all([
       prisma.grnItem.groupBy({
         by: ["category", "sku", "uom"],
-        where: { grn: warehouseWhere(warehouseIds), ...searchWhere },
+        where: { grn: { AND: [warehouseWhere(warehouseIds), companyFilter] }, ...searchWhere },
         _sum: { quantity: true },
       }),
       prisma.minItem.groupBy({
         by: ["category", "sku", "uom"],
-        where: { min: warehouseWhere(warehouseIds), ...searchWhere },
+        // A rejected outward never leaves the warehouse, so it is not counted (same rule as the outward form).
+        where: { min: { AND: [warehouseWhere(warehouseIds), companyFilter], status: { not: "REJECTED" } }, ...searchWhere },
         _sum: { quantity: true },
       }),
     ]);

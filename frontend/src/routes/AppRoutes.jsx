@@ -44,10 +44,6 @@ const DISPATCH_ROLES = ["SUPER_ADMIN", "WAREHOUSE_MANAGER"];
 
 const Home = () => <Dashboard />;
 
-const inventoryOnly = (page) => (
-  <ProtectedRoute roles={INVENTORY_ROLES}>{page}</ProtectedRoute>
-);
-
 const viewable = (page) => (
   <ProtectedRoute roles={VIEW_ROLES}>{page}</ProtectedRoute>
 );
@@ -85,7 +81,7 @@ const router = createBrowserRouter([
       { path: "/outward", element: <OutwardList /> },
       { path: "/reports", element: viewable(<Reports />) },
       { path: "/allusers", element: <AllUsers /> },
-      { path: "/stock-ledger", element: inventoryOnly(<StockLedger />) },
+      { path: "/stock-ledger", element: viewable(<StockLedger />) },
       { path: "/warehousemanagement", element: <WarehouseManagement /> },
       { path: "/companies", element: <CompanyManagement /> },
       { path: "/products", element: <ProductManagement /> },

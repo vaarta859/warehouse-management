@@ -17,7 +17,7 @@ async function checkInwardCompany(user, warehouseCompanies, companyId) {
   return null;
 }
 import { cleanSerials } from "../utils/serials.js";
-import { validateInwardSerials, replaceGrnSerials, pruneGrnSerials } from "../utils/inwardSerials.js";
+import { validateInwardSerials, replaceGrnSerials, pruneGrnSerials, findInwardSerialProblem } from "../utils/inwardSerials.js";
  
 /**
  * =========================================================
@@ -752,10 +752,16 @@ export async function updateGrn(req, res) {
     const serials = cleanSerials(data.serials);
     // Each product's serial rule (Required / Not required / Optional) decides which items take serial numbers.
     const serialItems = await withSerialModes(prisma, newItems);
-    if (serialsProvided) {
-      // An entry saved before serial numbers existed (none saved) can still be edited without them.
-      const serialProblem = validateInwardSerials(serialItems, serials, { allowEmpty: existing._count.serials === 0 });
+    // Same rule as when creating: a Required item must have all its serial numbers, also when updating.
+    // (Not sent = the form did not include them, which only passes when no item needs serial numbers.)
+    {
+      const serialProblem = validateInwardSerials(serialItems, serialsProvided ? serials : []);
       if (serialProblem) return res.status(422).json({ message: serialProblem });
+      // A serial that is already in stock (not dispatched since it came in) cannot be received again.
+      if (serialsProvided) {
+        const inStock = await findInwardSerialProblem(prisma, { grnId: id, serials });
+        if (inStock) return res.status(422).json({ message: inStock });
+      }
     }
     const fieldChanges = diffFields(existing, newSnapshot, [
       "inwardType", "supplierName", "companyName", "refDocType", "refDocNumber", "remarks",
@@ -1058,6 +1064,9 @@ export async function createGrn(req, res) {
     const serials = cleanSerials(data.serials);
     const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials);
     if (serialProblem) return res.status(422).json({ message: serialProblem });
+    // A serial that is already in stock (not dispatched since it came in) cannot be received again.
+    const inStockProblem = await findInwardSerialProblem(prisma, { serials });
+    if (inStockProblem) return res.status(422).json({ message: inStockProblem });
 
     let createdGrn = null;
     const MAX_NUMBER_ATTEMPTS = 10;

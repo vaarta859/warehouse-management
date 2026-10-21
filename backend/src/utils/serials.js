@@ -72,7 +72,7 @@ export function validateSerials(items, serials) {
     if (s.serialNo.length > MAX_SERIAL_LENGTH) return `Serial number "${s.serialNo.slice(0, 20)}..." is too long`;
     if (/[\s]/.test(s.serialNo)) return `Serial number "${s.serialNo}" must not contain spaces`;
     const key = serialKey(s.category, s.sku);
-    if (!lines.has(key)) return `Serial number "${s.serialNo}" does not belong to any Pcs item of this entry`;
+    if (!lines.has(key)) return `Serial number "${s.serialNo}" does not belong to an item of this entry that takes serial numbers (${s.sku}: serial no. is Not required, or the item is not counted in Pcs)`;
     const unique = s.serialNo.toLowerCase();
     if (seen.has(unique)) return `Serial number "${s.serialNo}" is entered more than once`;
     seen.add(unique);
