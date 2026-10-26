@@ -78,6 +78,8 @@ export default function InwardDetail() {
   const inward = useSelector(selectCurrentInward);
   // Sales / Account can view inward details and download documents, nothing more.
   const viewOnly = useSelector((state) => ["SALES", "ACCOUNT"].includes(state.auth.user?.role));
+  // Only Super Admin can edit an inward entry; warehouse managers can still manage documents.
+  const canUpdate = useSelector((state) => state.auth.user?.role === "SUPER_ADMIN");
   const detailStatus = useSelector(selectInwardDetailStatus);
   const error = useSelector(selectInwardDetailError);
   const docActionStatus = useSelector(selectDocActionStatus);
@@ -268,7 +270,7 @@ export default function InwardDetail() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {!viewOnly && (
+              {canUpdate && (
               <button type="button" onClick={() => navigate(`/inward/${id}/edit`)} className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-black sm:text-sm">Update</button>
               )}
               <button type="button" onClick={() => downloadInwardPdf(inward, items, documents)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:text-sm"><Download size={15} /> Download</button>

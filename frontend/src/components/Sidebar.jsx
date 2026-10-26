@@ -38,6 +38,19 @@ const BASE_ITEMS = [
   },
 ];
 
+// Each menu item has its own colour: [active background, active text, icon colour when idle]
+const TONES = {
+  dashboard: ["#EEF2FF", "#4338CA", "#6366F1"],
+  inward: ["#ECFDF5", "#047857", "#10B981"],
+  outward: ["#FFFBEB", "#B45309", "#F59E0B"],
+  reports: ["#F0F9FF", "#0369A1", "#0EA5E9"],
+  companies: ["#FDF4FF", "#A21CAF", "#C026D3"],
+  allusers: ["#FFF1F2", "#BE123C", "#F43F5E"],
+  warehousemanagement: ["#F0FDFA", "#0F766E", "#14B8A6"],
+  products: ["#F5F3FF", "#6D28D9", "#8B5CF6"],
+};
+const toneOf = (key) => TONES[key] || TONES.dashboard;
+
 export default function Sidebar({
   active = "dashboard",
   onNavigate = () => {},
@@ -97,7 +110,7 @@ export default function Sidebar({
   return (
     <>
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-56 bg-white border-r border-gray-200 flex-col shrink-0">
+      <aside className="hidden md:flex w-56 flex-col shrink-0" style={{ background: "linear-gradient(180deg,#E9D5FF 0%,#F1E8FF 55%,#F7F0FF 100%)", borderRight: "1px solid #D8B4FE" }}>
         <nav className="flex-1 py-4 overflow-y-auto">
 
           {/* Main Navigation */}
@@ -109,13 +122,12 @@ export default function Sidebar({
                     onClick={() => onNavigate(key)}
                     onMouseEnter={() => prefetchRoute(key)}
                     onFocus={() => prefetchRoute(key)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium ${
-                      active === key
-                        ? "bg-blue-50 text-blue-700"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                    style={active === key ? { background: "#FFFFFF", color: toneOf(key)[1], boxShadow: "0 1px 3px rgba(126,34,206,0.18)" } : undefined}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                      active === key ? "shadow-sm" : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
                     }`}
                   >
-                    <Icon size={18} />
+                    <Icon size={18} style={{ color: active === key ? toneOf(key)[1] : toneOf(key)[2] }} />
                     {label}
                   </button>
                 </li>
@@ -127,13 +139,13 @@ export default function Sidebar({
           {showSystemConfiguration && (
             <div className="mt-6 px-3">
               {/* Separator line */}
-              <div className="border-t border-gray-200 mb-3" />
+              <div className="border-t border-purple-200 mb-3" />
 
               {/* One-line heading */}
               <div className="flex items-center gap-2 px-3 mb-2 whitespace-nowrap">
-                <Settings size={16} className="text-gray-500 shrink-0" />
+                <Settings size={16} className="text-purple-700/70 shrink-0" />
 
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <span className="text-xs font-semibold text-purple-700/70 uppercase tracking-wider">
                   System Configuration
                 </span>
               </div>
@@ -148,13 +160,12 @@ export default function Sidebar({
                           onClick={() => onNavigate(key)}
                           onMouseEnter={() => prefetchRoute(key)}
                           onFocus={() => prefetchRoute(key)}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium ${
-                            active === key
-                              ? "bg-blue-50 text-blue-700"
-                              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                          }`}
-                        >
-                          <Icon size={18} />
+                          style={active === key ? { background: "#FFFFFF", color: toneOf(key)[1], boxShadow: "0 1px 3px rgba(126,34,206,0.18)" } : undefined}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                      active === key ? "shadow-sm" : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+                    }`}
+                  >
+                    <Icon size={18} style={{ color: active === key ? toneOf(key)[1] : toneOf(key)[2] }} />
                           {label}
                         </button>
                       </li>
@@ -167,10 +178,10 @@ export default function Sidebar({
         </nav>
 
         {/* Sign Out */}
-        <div className="p-3 border-t border-gray-200">
+        <div className="p-3 border-t border-purple-200">
           <button
             onClick={signOut}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-red-600"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-white/70 hover:text-rose-600"
           >
             <LogOut size={18} />
             Sign out
@@ -198,10 +209,11 @@ export default function Sidebar({
                   type="button"
                   onClick={() => { setSettingsOpen(false); onNavigate(key); }}
                   className={`flex items-center gap-3 rounded-xl border px-3 py-3.5 text-left text-sm font-semibold ${
-                    active === key ? "border-blue-200 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-900"
+                    active === key ? "border-transparent" : "border-gray-200 bg-white text-gray-900"
                   }`}
+                  style={active === key ? { background: toneOf(key)[0], color: toneOf(key)[1] } : undefined}
                 >
-                  <Icon size={20} className="shrink-0" />
+                  <Icon size={20} className="shrink-0" style={{ color: active === key ? toneOf(key)[1] : toneOf(key)[2] }} />
                   <span className="leading-tight">{label}</span>
                 </button>
               ))}
@@ -218,7 +230,7 @@ export default function Sidebar({
       )}
 
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex items-stretch"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t-2 border-violet-200 flex items-stretch"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {navItems.map(({ key, label, icon: Icon }) => (
@@ -227,11 +239,17 @@ export default function Sidebar({
             onClick={() => { setSettingsOpen(false); onNavigate(key); }}
             onTouchStart={() => prefetchRoute(key)}
             aria-label={label}
+            style={active === key && !settingsOpen ? { color: toneOf(key)[1] } : undefined}
             className={`flex h-[3.75rem] flex-1 flex-col items-center justify-center gap-0.5 ${
-              active === key && !settingsOpen ? "text-blue-700" : "text-gray-500"
+              active === key && !settingsOpen ? "" : "text-gray-500"
             }`}
           >
-            <Icon size={22} />
+            <span
+              className="flex h-7 w-12 items-center justify-center rounded-full transition-colors"
+              style={active === key && !settingsOpen ? { background: toneOf(key)[0] } : undefined}
+            >
+              <Icon size={21} />
+            </span>
             <span className="text-[11px] font-medium leading-none">{label}</span>
           </button>
         ))}
@@ -241,7 +259,7 @@ export default function Sidebar({
             onClick={() => setSettingsOpen((v) => !v)}
             aria-label="Settings"
             className={`flex h-[3.75rem] flex-1 flex-col items-center justify-center gap-0.5 ${
-              settingsOpen || systemConfigItems.some((i) => i.key === active) ? "text-blue-700" : "text-gray-500"
+              settingsOpen || systemConfigItems.some((i) => i.key === active) ? "text-violet-700" : "text-gray-500"
             }`}
           >
             <Settings size={22} />

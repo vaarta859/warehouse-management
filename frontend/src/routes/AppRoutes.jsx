@@ -92,7 +92,7 @@ const router = createBrowserRouter([
   // their own header + Back button and intentionally render
   // without the sidebar/navbar shell.
   { path: "/inward/create", element: fullScreen(<InwardForm />, INVENTORY_ROLES) },
-  { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, INVENTORY_ROLES) },
+  { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, ["SUPER_ADMIN"]) },
   { path: "/inward/:id", element: fullScreen(<InwardDetail />, VIEW_ROLES) },
 
   // Sales fills customer + item + cost details (and edits them until Account approves).

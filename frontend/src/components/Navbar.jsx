@@ -56,15 +56,15 @@ function Navbar({ location = "Delhi Warehouse" }) {
     .toUpperCase();
 
   return (
-    <header className="h-14 md:h-16 bg-blue-700 flex items-center justify-between gap-3 px-3 sm:px-6 shrink-0" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+    <header className="h-14 md:h-16 flex items-center justify-between gap-3 px-3 sm:px-6 shrink-0" style={{ paddingTop: "env(safe-area-inset-top)", background: "linear-gradient(100deg,#7C3AED 0%,#9333EA 55%,#C026D3 100%)" }}>
 
       {/* Logo */}
       <div className="flex shrink-0 items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+        <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
           <Package className="text-white" size={18} />
         </div>
 
-        <span className="text-white font-semibold text-base tracking-tight">
+        <span className="text-white font-bold text-base tracking-tight">
           InvTrack
         </span>
       </div>
@@ -78,7 +78,7 @@ function Navbar({ location = "Delhi Warehouse" }) {
             <button
               type="button"
               onClick={() => warehouses.length > 1 && setWarehouseOpen((value) => !value)}
-              className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[13px] font-medium leading-none text-white hover:bg-white/20 disabled:cursor-default disabled:hover:bg-white/10 sm:text-sm"
+              className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[13px] font-medium leading-none text-white hover:bg-white/25 disabled:cursor-default disabled:hover:bg-white/15 sm:text-sm"
               aria-label="Switch warehouse"
               disabled={warehouses.length <= 1}
             >
@@ -99,7 +99,7 @@ function Navbar({ location = "Delhi Warehouse" }) {
                     }}
                     className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm ${
                       selectedWarehouse?.id === warehouse.id
-                        ? "bg-blue-50 text-blue-700"
+                        ? "bg-purple-50 text-purple-700"
                         : "text-gray-700 hover:bg-gray-50"
                     }`}
                   >
@@ -116,17 +116,17 @@ function Navbar({ location = "Delhi Warehouse" }) {
         <div className="flex shrink-0 items-center gap-2">
 
           {/* Initials */}
-          <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-blue-700 text-xs font-semibold">
+          <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-purple-700 text-xs font-semibold">
             {initials}
           </div>
 
           {/* Name + Role */}
           <div className="hidden md:block leading-tight">
-            <div className="text-white text-sm font-medium">
+            <div className="text-white text-sm font-semibold">
               {userName}
             </div>
 
-            <div className="text-white/70 text-xs">
+            <div className="text-white/75 text-xs">
               {userRole}
             </div>
           </div>
@@ -137,7 +137,7 @@ function Navbar({ location = "Delhi Warehouse" }) {
         <button
           onClick={handleSignOut}
           aria-label="Sign out"
-          className="md:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/90 hover:bg-white/10 hover:text-white"
+          className="md:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/90 hover:bg-white/15 hover:text-white"
         >
           <LogOut size={20} />
         </button>

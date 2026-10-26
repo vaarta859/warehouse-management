@@ -1,4 +1,8 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
+
+/* Dashboard typeface (scoped, falls back to the system font if offline) */
+.dash-font { font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 
 /* ---------- Mobile / responsive base ---------- */
 html, body, #root { max-width: 100%; }
