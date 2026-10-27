@@ -204,6 +204,8 @@ export default function InwardForm() {
   // An entry saved before serial numbers existed (none saved) can still be edited without them.
 
   const [remarks, setRemarks] = useState("");
+  // Company the entry was saved with (matched by name once the company lists are loaded).
+  const [pendingCompanyName, setPendingCompanyName] = useState("");
 
   const inputCls =
     "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 sm:py-2.5 focus:ring-blue-500 placeholder:text-gray-400";
@@ -293,8 +295,16 @@ export default function InwardForm() {
         dispatch(setSelectedWarehouse(x.warehouse));
         // The entry stores the company NAME; match it to one of the warehouse's companies.
         const linked = warehouseCompaniesOf(x.warehouse);
-        const saved = linked.find((c) => c.name === x.companyName);
-        setSelectedCompanyId(saved?.id || x.warehouse.companyId || x.warehouse.company?.id || "");
+        const wanted = String(x.companyName || "").trim().toLowerCase();
+        const saved = linked.find((c) => String(c.name || "").trim().toLowerCase() === wanted);
+        if (saved) {
+          setSelectedCompanyId(saved.id);
+        } else if (wanted) {
+          // Never fall back to the warehouse's main company - that is how a different company got loaded.
+          setPendingCompanyName(wanted);
+        } else {
+          setSelectedCompanyId(x.warehouse.companyId || x.warehouse.company?.id || linked[0]?.id || "");
+        }
       }
       setInwardType(formatInwardType(x.inwardType) !== "-" ? formatInwardType(x.inwardType) : "Purchase - New Stock");
       const dt = x.inwardDateTime || x.refDocDate || x.createdAt;
@@ -320,6 +330,21 @@ export default function InwardForm() {
       }
     });
   }, [dispatch, editId, navigate]);
+
+  // Edit mode: find the company the entry was saved with, wherever it appears in the loaded lists.
+  useEffect(() => {
+    if (!pendingCompanyName) return;
+    const pool = [
+      ...warehouseCompaniesOf(selectedWarehouse),
+      ...companies,
+      ...warehouses.flatMap((w) => warehouseCompaniesOf(w)),
+    ];
+    const hit = pool.find((c) => String(c.name || "").trim().toLowerCase() === pendingCompanyName);
+    if (hit) {
+      setSelectedCompanyId(hit.id);
+      setPendingCompanyName("");
+    }
+  }, [pendingCompanyName, companies, warehouses, selectedWarehouse]);
 
   const warehouseId = selectedWarehouse?.id || "";
   const permissions = getWarehousePermissions(user, selectedWarehouse || warehouseId);
@@ -540,10 +565,12 @@ export default function InwardForm() {
 
   const referencePayload = useMemo(
     () =>
-      referenceDocuments.map((doc) => ({
-        refDocType: doc.refDocType,
-        refDocNumber: doc.refDocNumber.trim(),
-      })),
+      referenceDocuments
+        .map((doc) => ({
+          refDocType: doc.refDocType,
+          refDocNumber: doc.refDocNumber.trim(),
+        }))
+        .filter((doc) => doc.refDocNumber),
     [referenceDocuments]
   );
 
@@ -557,11 +584,6 @@ export default function InwardForm() {
 
     if (!selectedCompanyId || !companyName.trim()) {
       toast.error("Please select a company.");
-      return;
-    }
-
-    if (!referenceDocuments[0]?.refDocNumber.trim()) {
-      toast.error("Please enter reference document number.");
       return;
     }
 
@@ -623,8 +645,8 @@ export default function InwardForm() {
       supplierName: supplierName.trim(),
       companyName: companyName.trim(),
 
-      refDocType: firstReference.refDocType,
-      refDocNumber: firstReference.refDocNumber.trim(),
+      refDocType: firstReference?.refDocType || "Other",
+      refDocNumber: (firstReference?.refDocNumber || "").trim(),
       refDocDate: formatDateForApi(inwardDateTime),
 
       referenceDocuments: referencePayload,
@@ -646,19 +668,24 @@ export default function InwardForm() {
       ? await dispatch(updateInward({ id: editId, payload }))
       : await dispatch(createInward(payload));
 
-    if (createInward.rejected.match(result)) {
+    // Check the thunk that was actually dispatched. Checking only createInward let a
+    // failed updateInward through, so "updated successfully" showed with nothing saved.
+    const saveThunk = isEdit ? updateInward : createInward;
+    if (saveThunk.rejected.match(result)) {
       const err = result.payload || {};
+      const action = isEdit ? "update" : "create";
 
       if (err.status === 403) {
-        toast.error(err.message || "You are not authorized to create an inward entry.");
+        toast.error(err.message || `You are not authorized to ${action} this inward entry.`);
       } else if (err.status === 422) {
         toast.error(err.message || "Please check the form details.");
         console.log("Validation errors:", err.errors);
       } else if (err.status === 409) {
         toast.error(err.message || "The inward entry conflicts with existing data.");
       } else {
-        toast.error(err.message || "Failed to create inward entry.");
+        toast.error(err.message || `Failed to ${action} inward entry.`);
       }
+      dispatch(resetCreateStatus());
       return;
     }
 
@@ -812,7 +839,7 @@ export default function InwardForm() {
 
             {/* Reference documents */}
             <div className="mt-4 flex items-center justify-between">
-              <span className="text-sm font-semibold text-black">Reference documents</span>
+              <span className="text-sm font-semibold text-black">Reference documents <span className="font-normal text-gray-400">(optional)</span></span>
               <button
                 type="button"
                 onClick={addReferenceDocument}

@@ -580,7 +580,6 @@ export default function OutwardForm() {
         ...legacyRefs,
       ];
       if (["DISPATCHED", "DELIVERED"].includes(entryStatus)) {
-        if (!refs.length) return toast.error("Please enter at least one reference document number.");
         if (!dispatchMode && !transportLocked) return toast.error("Please select the dispatch mode.");
       }
       payload.dispatch = {

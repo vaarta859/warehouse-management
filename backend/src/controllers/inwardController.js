@@ -707,9 +707,6 @@ export async function updateGrn(req, res) {
     }
     const companyError = await checkInwardCompany(req.user, warehouseCompanies, data.companyId);
     if (companyError) return res.status(400).json({ message: companyError });
-    if (!references.length || !references.some((r) => r?.refDocNumber)) {
-      return res.status(422).json({ message: "At least one reference document is required." });
-    }
     if (!items.length) return res.status(422).json({ message: "At least one item is required." });
     for (const item of items) {
       if (!item.category || !item.sku?.trim() || Number(item.quantity) <= 0 || !item.uom) {
@@ -730,15 +727,18 @@ export async function updateGrn(req, res) {
         refDocType: String(r.refDocType || "Other").trim(),
         refDocNumber: String(r.refDocNumber).trim(),
       }));
- 
+
+    // Reference documents are optional: with none entered, an empty reference is stored.
+    const firstRef = normalizedRefs[0] || { refDocType: "Other", refDocNumber: "" };
+
     // Snapshot the "new" values in the same shape as `existing` so we can
     // diff them below, both for top-level fields and for the item list.
     const newSnapshot = {
       inwardType: data.inwardType,
       supplierName: data.supplierName.trim(),
       companyName: data.companyName.trim(),
-      refDocType: normalizedRefs[0].refDocType,
-      refDocNumber: normalizedRefs[0].refDocNumber,
+      refDocType: firstRef.refDocType,
+      refDocNumber: firstRef.refDocNumber,
       remarks: data.remarks?.trim() || null,
     };
     const newItems = items.map((item) => ({
@@ -775,8 +775,8 @@ export async function updateGrn(req, res) {
           inwardType: data.inwardType,
           supplierName: data.supplierName.trim(),
           companyName: data.companyName.trim(),
-          refDocType: normalizedRefs[0].refDocType,
-          refDocNumber: normalizedRefs[0].refDocNumber,
+          refDocType: firstRef.refDocType,
+          refDocNumber: firstRef.refDocNumber,
           refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
           remarks: data.remarks?.trim() || null,
           items: {
@@ -937,9 +937,6 @@ export async function createGrn(req, res) {
     }
     const companyError = await checkInwardCompany(req.user, transactionCompanies, data.companyId);
     if (companyError) return res.status(400).json({ message: companyError });
-    if (!data.refDocNumber && !Array.isArray(data.otherDocumentNumbers)) {
-      return res.status(422).json({ message: "At least one document number is required" });
-    }
  
     if (items.length === 0) {
       return res.status(422).json({
@@ -1085,8 +1082,8 @@ export async function createGrn(req, res) {
                 inwardType: data.inwardType,
                 supplierName: data.supplierName,
                 companyName: data.companyName || null,
-                refDocType: data.refDocType,
-                refDocNumber: data.refDocNumber,
+                refDocType: data.refDocType || "Other",
+                refDocNumber: data.refDocNumber ? String(data.refDocNumber).trim() : "",
                 refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
                 remarks: data.remarks || null,
                 createdById: req.user.id,

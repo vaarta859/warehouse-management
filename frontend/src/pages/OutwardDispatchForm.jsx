@@ -136,7 +136,6 @@ export default function OutwardDispatchForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!refsPayload.length) return toast.error("Please enter at least one reference document number or E-way bill number.");
     if (!dispatchMode) return toast.error("Please select the dispatch mode.");
 
     setSaving(true);
