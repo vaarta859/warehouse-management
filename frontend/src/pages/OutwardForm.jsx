@@ -17,6 +17,7 @@ import {
 import { fetchWarehouses, selectWarehouses } from "../features/warehouse/warehouseSlice";
 import { getWarehousePermissions } from "../features/warehouse/warehousePermissions";
 import { fetchCompanies, selectAllCompanies } from "../features/company/companySlice";
+import { fetchMe, selectCurrentUser } from "../features/auth/authSlice";
 import {
   COST_STATUS_OPTIONS,
   REQUIRED_DOCUMENTS,
@@ -109,7 +110,10 @@ export default function OutwardForm() {
   const createStatus = useSelector(selectOutwardCreateStatus);
   const products = useProducts();
 
-  const user = (() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } })();
+  // Live user from the store (refreshed from the server below), so companies an admin linked
+  // after this person logged in are picked up. Falls back to the copy saved at login.
+  const storeUser = useSelector(selectCurrentUser);
+  const user = storeUser || (() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } })();
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
 
   const [outwardDateTime, setOutwardDateTime] = useState(() => getDateTimeLocal());
@@ -186,23 +190,47 @@ export default function OutwardForm() {
   // ---- Companies / warehouses this user can pick from ----------------------
   useEffect(() => {
     if (isSuperAdmin) dispatch(fetchCompanies());
-    dispatch(fetchWarehouses({}));
+    else dispatch(fetchMe()); // reload the user's linked companies from the server
+    dispatch(fetchWarehouses({ force: true })); // always the latest company -> warehouse links
   }, [dispatch, isSuperAdmin]);
 
+  // Every company a warehouse is linked with (falls back to its single company).
+  const warehouseCompaniesOf = (w) => {
+    if (Array.isArray(w?.companies) && w.companies.length) return w.companies;
+    return w?.company?.id ? [w.company] : [];
+  };
+
+  // Companies the user may pick: Super admin -> all active companies.
+  // Sales -> EVERY company they are linked with (user.companies), plus any company of a
+  // warehouse they can reach that they belong to.
   const companyOptions = useMemo(() => {
     if (isSuperAdmin) return companies.filter((c) => c.status !== "Inactive");
+    const userCompanies = Array.isArray(user?.companies) && user.companies.length
+      ? user.companies
+      : (user?.company?.id ? [user.company] : []);
+    const userCompanyIds = new Set([
+      ...userCompanies.map((c) => c.id),
+      ...(user?.companyIds || []),
+      ...(user?.companyId ? [user.companyId] : []),
+    ]);
     const seen = new Map();
+    userCompanies.forEach((c) => {
+      if (c?.id && c?.name) seen.set(c.id, { id: c.id, name: c.name, status: c.status });
+    });
     warehouses.forEach((w) => {
-      if (w.company?.id && w.company?.name && !seen.has(w.company.id)) {
-        seen.set(w.company.id, { id: w.company.id, name: w.company.name, status: w.company.status });
-      }
+      warehouseCompaniesOf(w).forEach((c) => {
+        if (c?.id && c?.name && userCompanyIds.has(c.id) && !seen.has(c.id)) {
+          seen.set(c.id, { id: c.id, name: c.name, status: c.status });
+        }
+      });
     });
     return Array.from(seen.values()).filter((c) => c.status !== "Inactive");
-  }, [companies, warehouses, isSuperAdmin]);
+  }, [companies, warehouses, isSuperAdmin, user]);
 
+  // Every warehouse linked with the chosen company.
   const companyWarehouses = useMemo(() => {
     if (!selectedCompanyId) return [];
-    return warehouses.filter((w) => (w.companyId || w.company?.id) === selectedCompanyId);
+    return warehouses.filter((w) => warehouseCompaniesOf(w).some((c) => c.id === selectedCompanyId));
   }, [warehouses, selectedCompanyId]);
 
   // Only one choice? Pick it for them.
@@ -254,7 +282,9 @@ export default function OutwardForm() {
     setPiFile(null);
   }, [warehouseId, isEdit, dispatch]);
   const companyName =
-    selectedWarehouse?.company?.name || companyOptions.find((c) => c.id === selectedCompanyId)?.name || "";
+    companyOptions.find((c) => c.id === selectedCompanyId)?.name ||
+    warehouseCompaniesOf(selectedWarehouse).find((c) => c.id === selectedCompanyId)?.name ||
+    selectedWarehouse?.company?.name || "";
 
   // ---- Load the entry when editing ----------------------------------------
   useEffect(() => {
@@ -274,7 +304,10 @@ export default function OutwardForm() {
       }
       if (x.warehouse) {
         setEntryWarehouse(x.warehouse);
-        setSelectedCompanyId(x.warehouse.companyId || x.warehouse.company?.id || "");
+        // Show the company the entry was saved with (matched by name among the warehouse's companies).
+        const linked = warehouseCompaniesOf(x.warehouse);
+        const saved = linked.find((c) => String(c.name || "").trim().toLowerCase() === String(x.companyName || "").trim().toLowerCase());
+        setSelectedCompanyId(saved?.id || x.warehouse.companyId || x.warehouse.company?.id || linked[0]?.id || "");
         setPickedWarehouseId(x.warehouse.id);
       }
       setOutwardDateTime(getDateTimeLocal(x.refDocDate || x.createdAt));
@@ -394,7 +427,7 @@ export default function OutwardForm() {
 
   const permissions = getWarehousePermissions(user, selectedWarehouse || warehouseId);
   const operationBlocked =
-    !selectedWarehouse || selectedWarehouse.company?.status === "Inactive" || selectedWarehouse.Outward !== "Active";
+    !selectedWarehouse || (warehouseCompaniesOf(selectedWarehouse).length > 0 && warehouseCompaniesOf(selectedWarehouse).every((c) => c.status === "Inactive")) || selectedWarehouse.Outward !== "Active";
 
   // ---- Items ---------------------------------------------------------------
   const updateItem = (id, field, value) => setItems((p) => p.map((i) => {
