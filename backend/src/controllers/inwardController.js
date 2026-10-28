@@ -1,5 +1,5 @@
 import prisma from "../config/prisma.js";
-import { recordAuditLog, recordAuditLogs, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
+import { recordAuditLog, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
 import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
 import { getWarehouseCompanies, allCompaniesInactive } from "../utils/warehouseCompanies.js";
@@ -707,6 +707,7 @@ export async function updateGrn(req, res) {
     }
     const companyError = await checkInwardCompany(req.user, warehouseCompanies, data.companyId);
     if (companyError) return res.status(400).json({ message: companyError });
+    // Reference documents are optional.
     if (!items.length) return res.status(422).json({ message: "At least one item is required." });
     for (const item of items) {
       if (!item.category || !item.sku?.trim() || Number(item.quantity) <= 0 || !item.uom) {
@@ -727,18 +728,15 @@ export async function updateGrn(req, res) {
         refDocType: String(r.refDocType || "Other").trim(),
         refDocNumber: String(r.refDocNumber).trim(),
       }));
-
-    // Reference documents are optional: with none entered, an empty reference is stored.
-    const firstRef = normalizedRefs[0] || { refDocType: "Other", refDocNumber: "" };
-
+ 
     // Snapshot the "new" values in the same shape as `existing` so we can
     // diff them below, both for top-level fields and for the item list.
     const newSnapshot = {
       inwardType: data.inwardType,
       supplierName: data.supplierName.trim(),
       companyName: data.companyName.trim(),
-      refDocType: firstRef.refDocType,
-      refDocNumber: firstRef.refDocNumber,
+      refDocType: normalizedRefs[0]?.refDocType || "Other",
+      refDocNumber: normalizedRefs[0]?.refDocNumber || "",
       remarks: data.remarks?.trim() || null,
     };
     const newItems = items.map((item) => ({
@@ -775,8 +773,8 @@ export async function updateGrn(req, res) {
           inwardType: data.inwardType,
           supplierName: data.supplierName.trim(),
           companyName: data.companyName.trim(),
-          refDocType: firstRef.refDocType,
-          refDocNumber: firstRef.refDocNumber,
+          refDocType: normalizedRefs[0]?.refDocType || "Other",
+          refDocNumber: normalizedRefs[0]?.refDocNumber || "",
           refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
           remarks: data.remarks?.trim() || null,
           items: {
@@ -801,7 +799,6 @@ export async function updateGrn(req, res) {
       // -------------------------------------------------
       // AUDIT TRAIL
       // -------------------------------------------------
-      const auditEntries = [];
       const auditBase = {
         entityType: "INWARD",
         entityId: id,
@@ -810,7 +807,7 @@ export async function updateGrn(req, res) {
         warehouseId: existing.warehouseId,
       };
       if (serialsChanged) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "SERIALS_UPDATED",
           description: serialsProvided ? `Serial numbers saved: ${serials.length}` : "Serial numbers removed because the items changed",
@@ -818,7 +815,7 @@ export async function updateGrn(req, res) {
         });
       }
       for (const change of fieldChanges) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "UPDATED",
           description: `${change.label} updated from "${change.oldValue || "—"}" to "${change.newValue || "—"}"`,
@@ -826,7 +823,7 @@ export async function updateGrn(req, res) {
         });
       }
       for (const item of itemChanges.added) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "ITEM_ADDED",
           description: `Item added: ${describeItem(item)} — qty ${item.quantity} ${item.uom}`,
@@ -834,7 +831,7 @@ export async function updateGrn(req, res) {
         });
       }
       for (const item of itemChanges.removed) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "ITEM_REMOVED",
           description: `Item removed: ${describeItem(item)} — qty ${item.quantity} ${item.uom}`,
@@ -842,7 +839,7 @@ export async function updateGrn(req, res) {
         });
       }
       for (const { item, oldQuantity, newQuantity } of itemChanges.updated) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "ITEM_UPDATED",
           description: `Quantity updated for ${describeItem(item)} from ${oldQuantity} to ${newQuantity} ${item.uom}`,
@@ -850,17 +847,15 @@ export async function updateGrn(req, res) {
         });
       }
       if (!serialsChanged && !fieldChanges.length && !itemChanges.added.length && !itemChanges.removed.length && !itemChanges.updated.length) {
-        auditEntries.push({
+        await recordAuditLog(tx, {
           ...auditBase,
           action: "UPDATED",
           description: "Inward entry saved with no field changes",
         });
       }
  
-      await recordAuditLogs(tx, auditEntries);
-
       return tx.grn.findUnique({ where: { id }, include: { items: true, serials: { orderBy: { createdAt: "asc" } }, referenceDocuments: true } });
-    }, { maxWait: 10000, timeout: 30000 });
+    });
     return res.json({ message: "Inward entry updated successfully", data: result });
   } catch (error) {
     console.error("Update GRN error:", error);
@@ -940,6 +935,7 @@ export async function createGrn(req, res) {
     }
     const companyError = await checkInwardCompany(req.user, transactionCompanies, data.companyId);
     if (companyError) return res.status(400).json({ message: companyError });
+    // Reference documents are optional.
  
     if (items.length === 0) {
       return res.status(422).json({
@@ -1085,8 +1081,8 @@ export async function createGrn(req, res) {
                 inwardType: data.inwardType,
                 supplierName: data.supplierName,
                 companyName: data.companyName || null,
-                refDocType: data.refDocType || "Other",
-                refDocNumber: data.refDocNumber ? String(data.refDocNumber).trim() : "",
+                refDocType: referenceDocumentRows[0]?.refDocType || data.refDocType || "Other",
+                refDocNumber: referenceDocumentRows[0]?.refDocNumber || String(data.refDocNumber || "").trim(),
                 refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
                 remarks: data.remarks || null,
                 createdById: req.user.id,
