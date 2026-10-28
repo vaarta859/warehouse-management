@@ -108,6 +108,22 @@ function roleWhere(req) {
   }
 }
 
+// The company picked on an outward must be one the warehouse is linked with and,
+// for non-admin users (Sales), one the user also belongs to.
+async function assertCompanyForWarehouse(req, warehouseId, companyId) {
+  if (!companyId) throw httpError(422, "companyId is required");
+  const warehouseCompanies = await getWarehouseCompanies(warehouseId);
+  const linked = warehouseCompanies.find((c) => c.id === companyId);
+  if (!linked) {
+    throw httpError(400, `This warehouse is not linked with the selected company. Linked companies: ${warehouseCompanies.map((c) => c.name).join(", ") || "none"}.`);
+  }
+  if (linked.status === "Inactive") throw httpError(403, "The selected company is inactive.");
+  if (req.user.role !== "SUPER_ADMIN") {
+    const userCompanyIds = await getUserCompanyIds(req.user);
+    if (!userCompanyIds.includes(companyId)) throw httpError(403, "You are not linked with the selected company");
+  }
+}
+
 async function assertWarehouseAccess(req, warehouseId, permission = "canOutward") {
   if (!warehouseId) throw httpError(400, "warehouseId is required");
 
@@ -608,10 +624,7 @@ export async function createOutward(req, res) {
 
     const warehouse = await assertWarehouseAccess(req, data.warehouseId, "canOutward");
 
-    if (!data.companyId) return res.status(422).json({ message: "companyId is required" });
-    if (warehouse.companyId !== data.companyId) {
-      return res.status(400).json({ message: "Selected warehouse does not belong to the selected company" });
-    }
+    await assertCompanyForWarehouse(req, warehouse.id, data.companyId);
     const problem = validateSalesPayload(data, items);
     if (problem) return res.status(422).json({ message: problem });
 
@@ -751,9 +764,7 @@ export async function updateOutward(req, res) {
     const warehouse = await assertWarehouseAccess(req, existing.warehouseId, "canOutward");
     const proofProblem = proofKeyProblem(items, id, existing.outwardNumber, data.piFileKey);
     if (proofProblem) return res.status(422).json({ message: proofProblem });
-    if (!data.companyId || warehouse.companyId !== data.companyId) {
-      return res.status(400).json({ message: "Selected company does not match this warehouse." });
-    }
+    await assertCompanyForWarehouse(req, warehouse.id, data.companyId);
 
     // A row that still holds its old proof file says keepProof: true.
     const existingById = new Map(existing.items.map((i) => [i.id, i]));
