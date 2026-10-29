@@ -731,7 +731,7 @@ export async function createOutward(req, res) {
 // Edit lock for Sales / Account: reads the entry's documents + reference documents and applies editLockReason.
 // `entry` needs id, status and transportSubmittedAt. `client` is prisma or a transaction client.
 async function lockReasonFor(client, entry) {
-  if (isDispatchedStatus(entry.status) || entry.status === STATUS.READY_FOR_DISPATCH) return editLockReason(entry);
+  if (isDispatchedStatus(entry.status)) return editLockReason(entry);
   if (!isApprovedStatus(entry.status) || !entry.transportSubmittedAt) return null;
   const [docs, refs] = await Promise.all([
     client.document.findMany({ where: { linkedType: "outward", linkedId: entry.id }, select: { docCategory: true } }),
@@ -745,7 +745,7 @@ async function lockReasonFor(client, entry) {
 // PENDING_APPROVAL / REJECTED  -> always (re)submitted to Account.
 // TRANSPORT_PENDING / DOCS_PENDING -> any update goes back to Account for approval, until the transportation
 //                                 details are sent AND Account has uploaded documents (then it is locked).
-// READY_FOR_DISPATCH           -> locked for Sales (Super admin only).
+// READY_FOR_DISPATCH           -> Sales can edit until Account has uploaded its documents (see editLockReason).
 // DISPATCHED / DELIVERED       -> Super admin only, status unchanged.
 // ---------------------------------------------------------------------------
 export async function updateOutward(req, res) {
@@ -1165,11 +1165,8 @@ export async function dispatchOutward(req, res) {
     const firstDispatch = isApprovedStatus(existing.status);
     if (firstDispatch) {
       if (!hasTransport) return res.status(409).json({ message: "Please submit the transportation form first" });
-      const [docsNow, refsNow] = await Promise.all([
-        prisma.document.findMany({ where: { linkedType: "outward", linkedId: id }, select: { docCategory: true } }),
-        prisma.minReferenceDocument.findMany({ where: { minId: id }, select: { refDocType: true } }),
-      ]);
-      if (!hasReleaseDocument(docsNow, refsNow) || ewayBillProblem({ piAmount: existing.piAmount, documents: docsNow })) return res.status(409).json({ message: "Dispatch opens once the account team has shared the documents" });
+      // Account's documents (and the e-way bill) are optional, but Account must have pressed Submit / Save first.
+      if (existing.status !== STATUS.READY_FOR_DISPATCH) return res.status(409).json({ message: "Dispatch opens once the account team has submitted its documents section" });
     }
     // Vehicle / driver / transporter come from the transportation form (read-only here). Entries dispatched
     // before that form existed keep the old behaviour and take them from this request.
@@ -1570,10 +1567,6 @@ export async function saveAccountDocuments(req, res) {
     // Account's reference rows are replaced by the ones in this request; the manager's rows stay.
     const resultingRefs = [...savedRefs.filter((r) => !isAccountRefType(r.refDocType)), ...refs];
     const willShare = hasReleaseDocument(resulting, resultingRefs);
-    if (willShare) {
-      const ewayIssue = ewayBillProblem({ piAmount: existing.piAmount, documents: resulting });
-      if (ewayIssue) return res.status(422).json({ message: ewayIssue });
-    }
 
     const uploaded = files.length ? await storeOutwardFiles(files, categories, existing.outwardNumber) : [];
     let replaced = [];
@@ -1600,8 +1593,8 @@ export async function saveAccountDocuments(req, res) {
             })),
           });
         }
-        // DOCS_PENDING <-> READY_FOR_DISPATCH, depending on whether a non-Invoice account document exists now.
-        await syncApprovedStage(tx, id);
+        // Account pressed Submit / Save: the entry is released to the warehouse manager (documents are optional).
+        await tx.min.updateMany({ where: { id, status: { in: APPROVED_STATUSES } }, data: { status: STATUS.READY_FOR_DISPATCH } });
       });
     } catch (txError) {
       if (uploaded.length) await supabase.storage.from(SUPABASE_BUCKET).remove(uploaded.map((u) => u.fileKey)).catch(() => {});
@@ -1614,7 +1607,7 @@ export async function saveAccountDocuments(req, res) {
 
     const base = { entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber, userId: req.user.id, warehouseId: existing.warehouseId };
     const entries = [{ ...base, action: "UPDATED", description: `Account reference documents saved (${refs.length})` }];
-    if (willShare && !wasShared) entries.push({ ...base, action: "UPDATED", description: "Documents shared with the warehouse manager - dispatch form opened" });
+    if (existing.status !== STATUS.READY_FOR_DISPATCH) entries.push({ ...base, action: "UPDATED", description: "Account submitted - dispatch form opened for the warehouse manager" });
     for (const u of uploaded) {
       const isInvoice = isInvoiceDocCategory(u.docCategory);
       entries.push({ ...base, action: isInvoice ? "INVOICE_CREATED" : "DOCUMENT_ADDED", description: isInvoice ? `Invoice created by ${req.user.name}` : `Document added: ${u.docCategory} (${u.fileName})`, changes: { docCategory: u.docCategory, fileName: u.fileName } });

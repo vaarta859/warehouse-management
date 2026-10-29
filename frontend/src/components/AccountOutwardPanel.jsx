@@ -114,8 +114,9 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
   const ewayProvided = hasEwayDocument(accountDocs, stagedDocs);
   const EWAY_MESSAGE = `The PI amount is above ₹${EWAY_BILL_THRESHOLD.toLocaleString("en-IN")}: upload the e-way bill document before sharing the documents with the warehouse.`;
   // Shared once Account has any document (file) or any saved reference (Invoice / E-way Bill / DC Challan / ...).
-  const sharedWithWarehouse =
-    accountDocs.some((d) => isReleaseDocCategory(d.docCategory)) || readOnlyRefs.some((r) => isReleaseRefType(r.refDocType));
+  // Released to the warehouse manager once Account has pressed Submit after the transportation form (documents are optional).
+  const sharedWithWarehouse = outward?.stage === "READY_FOR_DISPATCH" || outward?.stage === "DISPATCHED";
+  const awaitingSubmit = editable && !docsBlockedMessage && !sharedWithWarehouse && Boolean(outward?.transportSubmittedAt || outward?.stage === "DOCS_PENDING");
 
   const handleSave = async () => {
     if (saving) return false;
@@ -261,7 +262,7 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
         >
           {sharedWithWarehouse
             ? "Shared with the warehouse manager - their dispatch form is open. Every document you upload (the Invoice too) is visible to them."
-            : "Vehicle details received. Upload a document (invoice, e-way bill, DC challan, invoice without amount or other) to share the entry with the warehouse manager and open their dispatch form."}
+            : "Vehicle details received. Press Submit to open the warehouse manager's dispatch form. Documents (invoice, e-way bill, DC challan, invoice without amount or other) are optional."}
         </div>
 
         {aboveLimit && (
@@ -318,11 +319,21 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
         otherPrefix={ACCOUNT_DOC_PREFIX}
         showSummary={false}
         title="Documents"
-        subtitle="One row for each reference document above. Every document you upload, the Invoice included, is shared with the warehouse manager. E-way bill upload is required first when the PI amount is above ₹1,00,000."
+        subtitle="One row for each reference document above. Every document you upload, the Invoice included, is shared with the warehouse manager. All documents are optional."
       />
 
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {dirty && !canApprove && (
+        {awaitingSubmit && (
+          <button
+            type="button"
+            onClick={async () => { if (await handleSave()) toast.success("Submitted. The warehouse manager's dispatch form is now open."); }}
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Submit
+          </button>
+        )}
+        {!awaitingSubmit && dirty && !canApprove && (
           <button
             type="button"
             onClick={async () => { if (await handleSave()) toast.success("Documents saved."); }}

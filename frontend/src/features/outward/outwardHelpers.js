@@ -47,7 +47,8 @@ export const refNumberLabel = (type) =>
 
 // Above this PI amount (Rs.) an e-way bill number or the e-way bill document is required before approval.
 export const EWAY_BILL_THRESHOLD = 100000;
-export const isAboveEwayLimit = (piAmount) => Number(piAmount) > EWAY_BILL_THRESHOLD;
+// The e-way bill is never mandatory, whatever the PI amount.
+export const isAboveEwayLimit = () => false;
 const isEwayCategory = (category) => /^e-?way/i.test(String(category || "").trim());
 // True when an e-way bill DOCUMENT (uploaded or picked) exists - the e-way bill number alone is not enough.
 export const hasEwayDocument = (docs = [], staged = []) => [...docs, ...staged].some((d) => isEwayCategory(d.docCategory));
@@ -84,7 +85,7 @@ export const isApprovedStatus = (status) => APPROVED_STATUSES.includes(status);
 export const isDispatchedStatus = (status) => DISPATCHED_STATUSES.includes(status);
 // Sales can edit until the entry is locked (the server also sends `editLocked`).
 // Account can reject / hold / approve at any step until the dispatch is done (the lock does not apply to Account).
-export const SALES_EDITABLE_STATUSES = ["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING"];
+export const SALES_EDITABLE_STATUSES = ["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"];
 export const REJECTABLE_STATUSES = ["PENDING_APPROVAL", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"];
 export const HOLDABLE_STATUSES = ["PENDING_APPROVAL", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"];
 

@@ -313,7 +313,7 @@ export default function OutwardForm() {
       }
       const x = result.payload;
       // Editable until the transportation details are sent AND Account has uploaded documents (x.editLocked, from the server).
-      if (!isSuperAdmin && (x.editLocked || !["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING"].includes(x.workflowStatus))) {
+      if (!isSuperAdmin && (x.editLocked || !["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"].includes(x.workflowStatus))) {
         toast.error(x.editLockReason || "This entry can no longer be edited.");
         navigate(`/outward/${editId}`, { replace: true });
         return;

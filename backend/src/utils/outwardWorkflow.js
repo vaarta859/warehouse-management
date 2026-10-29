@@ -71,7 +71,7 @@ export const WAREHOUSE_VISIBLE_STATUSES = [STATUS.PENDING_APPROVAL, STATUS.ON_HO
 
 // Sales may edit until dispatch; Account may reject until dispatch.
 // READY_FOR_DISPATCH (and DOCS_PENDING once Account has uploaded documents - see editLockReason) is locked.
-export const SALES_EDITABLE_STATUSES = [STATUS.PENDING_APPROVAL, STATUS.REJECTED, STATUS.ON_HOLD, STATUS.PENDING_DISPATCH, STATUS.TRANSPORT_PENDING, STATUS.DOCS_PENDING];
+export const SALES_EDITABLE_STATUSES = [STATUS.PENDING_APPROVAL, STATUS.REJECTED, STATUS.ON_HOLD, STATUS.PENDING_DISPATCH, STATUS.TRANSPORT_PENDING, STATUS.DOCS_PENDING, STATUS.READY_FOR_DISPATCH];
 export const REJECTABLE_STATUSES = [STATUS.PENDING_APPROVAL, STATUS.ON_HOLD, STATUS.PENDING_DISPATCH, STATUS.TRANSPORT_PENDING, STATUS.DOCS_PENDING, STATUS.READY_FOR_DISPATCH];
 // Account can reject / hold an entry at ANY step until the dispatch is completely done (the edit lock does not apply to Account decisions).
 export const HOLDABLE_STATUSES = [STATUS.PENDING_APPROVAL, STATUS.PENDING_DISPATCH, STATUS.TRANSPORT_PENDING, STATUS.DOCS_PENDING, STATUS.READY_FOR_DISPATCH];
@@ -334,17 +334,10 @@ export const ACCOUNT_DOC_STATUSES = [STATUS.PENDING_DISPATCH, STATUS.DOCS_PENDIN
  */
 export const EWAY_BILL_THRESHOLD = 100000;
 
-export function ewayBillProblem({ piAmount, documents = [] }) {
-  if (!(Number(piAmount) > EWAY_BILL_THRESHOLD)) return null;
-  // The e-way bill FILE must be uploaded - a reference number alone is not enough.
-  const hasDocument = documents.some((d) => /^e-?way/i.test(String(d.docCategory || "").trim()));
-  return hasDocument
-    ? null
-    : "The PI amount is above Rs. 1,00,000: the e-way bill document must be uploaded by the account team before the entry can go to the warehouse.";
+export function ewayBillProblem() {
+  // The e-way bill is never mandatory for Account, whatever the PI amount (kept as a function so callers need no change).
+  return null;
 }
-
-
-
 
 /** Driver name / contact are optional, but a contact must look like a phone number when given. */
 export function validateDriver(data) {
@@ -448,9 +441,9 @@ export const hasReleaseDocument = (docs = [], refs = []) =>
  */
 export function deriveApprovedStatus(entry, docs = [], refs = []) {
   if (!entry.transportSubmittedAt) return STATUS.TRANSPORT_PENDING;
-  // Above the e-way limit the entry stays with Account until the e-way bill file is uploaded.
-  if (ewayBillProblem({ piAmount: entry.piAmount, documents: docs })) return STATUS.DOCS_PENDING;
-  return hasReleaseDocument(docs, refs) ? STATUS.READY_FOR_DISPATCH : STATUS.DOCS_PENDING;
+  // Account's documents are optional, but the dispatch form opens only once Account has pressed Submit / Save after the
+  // transportation form (saveAccountDocuments sets READY_FOR_DISPATCH). Once ready, it stays ready.
+  return entry.status === STATUS.READY_FOR_DISPATCH ? STATUS.READY_FOR_DISPATCH : STATUS.DOCS_PENDING;
 }
 
 /** Which stage an entry is in. null for entries that are not approved yet (use `status`). */
@@ -488,7 +481,6 @@ export async function syncApprovedStage(client, minId) {
 export function editLockReason(entry, docs = [], refs = []) {
   if (isDispatchedStatus(entry.status)) return "This entry has been dispatched and can no longer be edited";
   const message = "The transportation details and the account documents are already submitted, so this entry can no longer be updated";
-  if (entry.status === STATUS.READY_FOR_DISPATCH) return message;
   if (isApprovedStatus(entry.status) && entry.transportSubmittedAt) {
     const accountUploaded = docs.some((d) => isAccountDocCategory(d.docCategory)) || refs.some((r) => isAccountRefType(r.refDocType));
     if (accountUploaded) return message;

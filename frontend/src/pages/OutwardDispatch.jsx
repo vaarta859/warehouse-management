@@ -156,7 +156,7 @@ export default function OutwardDispatch() {
       toast.info(
         outward.stage === STAGE.TRANSPORT_PENDING
           ? "Fill the transportation form first."
-          : "Dispatch opens once the account team has shared the documents."
+          : "Dispatch opens once the account team has submitted its section."
       );
       navigate(`/outward/${id}`, { replace: true });
     }
