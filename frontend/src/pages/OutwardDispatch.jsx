@@ -181,11 +181,7 @@ export default function OutwardDispatch() {
         refDocType: r.refDocType,
         refDocNumber: r.refDocNumber.trim(),
       }));
-    if (!refs.length) return toast.error("Please enter at least one reference document number.");
-    // Bilty document is compulsory: already uploaded, or picked in this form.
-    const isBilty = (c) => /^bilty/i.test(String(c || "").trim());
-    const hasBilty = (outward.documents || []).some((d) => isBilty(d.docCategory)) || stagedDocs.some((d) => isBilty(d.docCategory));
-    if (!hasBilty) return toast.error("Please upload the Bilty document.");
+    // Reference documents and uploaded documents (Bilty included) are optional.
     const fromTransport = isTransportSubmitted(outward);
     if (!fromTransport) {
       if (!dispatchMode) return toast.error("Please select the dispatch mode.");
@@ -451,7 +447,7 @@ export default function OutwardDispatch() {
             outwardId={id}
             documents={(outward.documents || []).filter((d) => !isReceivingDocCategory(d.docCategory))}
             canManage
-            requiredDocuments={["Bilty"]}
+            requiredDocuments={[]}
             showSummary={false}
             optionalDocuments={documentSlots}
             addMenuTypes={[...REQUIRED_DOCUMENTS, "Bilty", "Return note", "Other"]}

@@ -139,6 +139,9 @@ export default function OutwardForm() {
   // Sales' note for the warehouse team (shown to the warehouse manager on the dispatch screens).
   const [salesDispatchRemarks, setSalesDispatchRemarks] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  // Editing: the company the entry was saved with stays as it is unless the super admin picks another one.
+  const [savedCompanyName, setSavedCompanyName] = useState("");
+  const [companyTouched, setCompanyTouched] = useState(false);
   const [pickedWarehouseId, setPickedWarehouseId] = useState("");
   const [entryWarehouse, setEntryWarehouse] = useState(null); // edit mode: the entry's own warehouse
   const [items, setItems] = useState([newItem()]);
@@ -166,6 +169,8 @@ export default function OutwardForm() {
   // approving again the dispatch details are filled on the dispatch page. Once an entry is
   // dispatched, the super admin gets the whole form: sales + dispatch details + documents.
   const currentOutward = useSelector(selectCurrentOutward);
+  // Super admin can change the company of an entry to any active company until it is dispatched.
+  const canChangeCompany = isEdit && isSuperAdmin && !["DISPATCHED", "DELIVERED"].includes(entryStatus);
   const showDispatchSection = isEdit && isSuperAdmin && ["DISPATCHED", "DELIVERED"].includes(entryStatus);
   const [dispatchMode, setDispatchMode] = useState("By Road");
   const [vehicleNumber, setVehicleNumber] = useState("");
@@ -281,10 +286,21 @@ export default function OutwardForm() {
     if (piFileRef.current?.fileKey) dispatch(deleteUploadedProof({ fileKey: piFileRef.current.fileKey }));
     setPiFile(null);
   }, [warehouseId, isEdit, dispatch]);
-  const companyName =
+  const pickedCompanyName =
     companyOptions.find((c) => c.id === selectedCompanyId)?.name ||
     warehouseCompaniesOf(selectedWarehouse).find((c) => c.id === selectedCompanyId)?.name ||
     selectedWarehouse?.company?.name || "";
+  // An untouched edit form keeps the saved company name (never swapped for the warehouse's default company).
+  const companyName = isEdit && !companyTouched && savedCompanyName ? savedCompanyName : pickedCompanyName;
+
+  // Editing: point the dropdown at the saved company once the company list is available.
+  useEffect(() => {
+    if (!isEdit || companyTouched || !savedCompanyName) return;
+    const key = savedCompanyName.trim().toLowerCase();
+    const match = [...companies, ...warehouseCompaniesOf(entryWarehouse)].find((c) => String(c.name || "").trim().toLowerCase() === key);
+    if (match && match.id !== selectedCompanyId) setSelectedCompanyId(match.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, companyTouched, savedCompanyName, companies, entryWarehouse]);
 
   // ---- Load the entry when editing ----------------------------------------
   useEffect(() => {
@@ -307,6 +323,7 @@ export default function OutwardForm() {
         // Show the company the entry was saved with (matched by name among the warehouse's companies).
         const linked = warehouseCompaniesOf(x.warehouse);
         const saved = linked.find((c) => String(c.name || "").trim().toLowerCase() === String(x.companyName || "").trim().toLowerCase());
+        setSavedCompanyName(x.companyName || "");
         setSelectedCompanyId(saved?.id || x.warehouse.companyId || x.warehouse.company?.id || linked[0]?.id || "");
         setPickedWarehouseId(x.warehouse.id);
       }
@@ -690,7 +707,24 @@ export default function OutwardForm() {
             <h2 className="mb-4 text-sm font-semibold text-gray-900">Company & Warehouse</h2>
             {isEdit ? (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div><label className={labelCls}>Company</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{companyName || "-"}</div></div>
+                {canChangeCompany ? (
+                  <div>
+                    <label className={labelCls}>Company</label>
+                    <div className="relative">
+                      <select
+                        value={selectedCompanyId}
+                        onChange={(e) => { setCompanyTouched(true); setSelectedCompanyId(e.target.value); }}
+                        className={`${inputCls} appearance-none bg-white`}
+                      >
+                        {companyOptions.some((c) => c.id === selectedCompanyId) ? null : <option value={selectedCompanyId}>{companyName || "Select company"}</option>}
+                        {companyOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    </div>
+                  </div>
+                ) : (
+                  <div><label className={labelCls}>Company</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{companyName || "-"}</div></div>
+                )}
                 <div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "-"}</div></div>
               </div>
             ) : (

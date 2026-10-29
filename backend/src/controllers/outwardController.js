@@ -111,10 +111,15 @@ function roleWhere(req) {
 
 // The company picked on an outward must be one the warehouse is linked with and,
 // for non-admin users (Sales), one the user also belongs to.
-async function assertCompanyForWarehouse(req, warehouseId, companyId) {
+// `anyCompanyForAdmin`: when the Super admin edits an existing entry they may pick ANY active company, not only the ones linked with the warehouse.
+async function assertCompanyForWarehouse(req, warehouseId, companyId, anyCompanyForAdmin = false) {
   if (!companyId) throw httpError(422, "companyId is required");
   const warehouseCompanies = await getWarehouseCompanies(warehouseId);
-  const linked = warehouseCompanies.find((c) => c.id === companyId);
+  let linked = warehouseCompanies.find((c) => c.id === companyId);
+  if (!linked && anyCompanyForAdmin && req.user.role === "SUPER_ADMIN") {
+    linked = await prisma.company.findUnique({ where: { id: companyId }, select: { id: true, name: true, status: true } });
+    if (!linked) throw httpError(404, "Company not found");
+  }
   if (!linked) {
     throw httpError(400, `This warehouse is not linked with the selected company. Linked companies: ${warehouseCompanies.map((c) => c.name).join(", ") || "none"}.`);
   }
@@ -778,7 +783,7 @@ export async function updateOutward(req, res) {
     const warehouse = await assertWarehouseAccess(req, existing.warehouseId, "canOutward");
     const proofProblem = proofKeyProblem(items, id, existing.outwardNumber, data.piFileKey);
     if (proofProblem) return res.status(422).json({ message: proofProblem });
-    await assertCompanyForWarehouse(req, warehouse.id, data.companyId);
+    await assertCompanyForWarehouse(req, warehouse.id, data.companyId, true);
 
     // A row that still holds its old proof file says keepProof: true.
     const existingById = new Map(existing.items.map((i) => [i.id, i]));
@@ -816,14 +821,14 @@ export async function updateOutward(req, res) {
           ewayBillNumber: r.ewayBillNumber ? String(r.ewayBillNumber).trim() : null,
           vehicleNumber: r.vehicleNumber ? String(r.vehicleNumber).trim() : null,
         }));
-      if (!refs.length) return res.status(422).json({ message: "At least one reference document is required" });
+      // Reference documents are optional.
       dispatchUpdate = {
         refs,
         transportFixed,
         snapshot: {
-          refDocType: refs[0].refDocType,
-          refDocNumber: refs[0].refDocNumber,
-          ewayBillNumber: refs[0].ewayBillNumber,
+          refDocType: refs[0]?.refDocType ?? existing.refDocType ?? "Other",
+          refDocNumber: refs[0]?.refDocNumber ?? existing.refDocNumber ?? "N/A",
+          ewayBillNumber: refs[0]?.ewayBillNumber ?? null,
           ...(transportFixed
             ? {}
             : {
@@ -1183,7 +1188,7 @@ export async function dispatchOutward(req, res) {
         refDocNumber: String(r.refDocNumber).trim(),
         ewayBillNumber: null,
       }));
-    if (!normalizedRefs.length) return res.status(422).json({ message: "At least one reference document is required" });
+    // Reference documents are optional.
     if (normalizedRefs.some((r) => isAccountRefType(r.refDocType))) {
       return res.status(422).json({ message: "Invoice and e-way bill references are added by the account team" });
     }
@@ -1191,21 +1196,13 @@ export async function dispatchOutward(req, res) {
       return res.status(422).json({ message: "Invoice and e-way bill documents are added by the account team" });
     }
 
-    // Bilty document is compulsory: it has to be uploaded now, or already be saved on the entry.
-    // (A file uploaded now for the same category replaces the saved one, so either way a Bilty exists afterwards.)
-    if (!categories.some((c) => isBiltyDocCategory(c))) {
-      const savedBilty = await prisma.document.findFirst({
-        where: { linkedType: "outward", linkedId: id, docCategory: { startsWith: "Bilty", mode: "insensitive" } },
-        select: { id: true },
-      });
-      if (!savedBilty) return res.status(422).json({ message: "Bilty document is required. Please upload the Bilty before dispatching." });
-    }
+    // Documents (Bilty included) are optional - nothing has to be uploaded to dispatch.
 
     // Serial numbers are scanned on the transportation form (see saveTransportation); dispatch leaves them as they are.
 
     const newSnapshot = {
-      refDocType: normalizedRefs[0].refDocType,
-      refDocNumber: normalizedRefs[0].refDocNumber,
+      refDocType: normalizedRefs[0]?.refDocType ?? existing.refDocType ?? "Other",
+      refDocNumber: normalizedRefs[0]?.refDocNumber ?? existing.refDocNumber ?? "N/A",
       dispatchMode,
       vehicleNumber: hasTransport ? existing.vehicleNumber : data.vehicleNumber?.trim() || null,
       driverName: hasTransport ? existing.driverName : data.driverName?.trim() || null,
