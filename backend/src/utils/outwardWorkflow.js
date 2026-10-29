@@ -253,7 +253,8 @@ export function toItemRow(item, previous) {
     utrNumber: paid ? String(item.utrNumber || "").trim() || null : null,
     approvedBy: item.paymentStatus !== "COMPLETED" ? String(item.approvedBy || "").trim() || null : null,
     proofFileKey: paid ? (keep ? previous.proofFileKey : item.proofFileKey || null) : null,
-    proofFileName: paid ? (keep ? previous.proofFileName : item.proofFileName || null) : null,
+    // A payment proof is always named "payment" (keeping its extension), whatever the original file was called.
+    proofFileName: paid ? (keep ? previous.proofFileName : item.proofFileKey ? `payment${(String(item.proofFileKey).match(/\.[a-z0-9]+$/i) || [""])[0].toLowerCase()}` : null) : null,
     proofFileType: paid ? (keep ? previous.proofFileType : item.proofFileType || null) : null,
   };
 }

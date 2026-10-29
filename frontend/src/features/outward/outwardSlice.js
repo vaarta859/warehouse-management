@@ -202,7 +202,7 @@ export const uploadOutwardProof = createAsyncThunk(
       // Text fields go first so the server knows the target folder: min/<warehouse>/<outwardId>/
       formData.append("warehouseId", warehouseId);
       formData.append("outwardId", outwardId);
-      if (kind) formData.append("kind", kind); // "pi" -> the file is saved as PI.<ext>
+      if (kind) formData.append("kind", kind); // "pi" -> saved as PI.<ext>; no kind -> saved as payment.<ext>
       formData.append("file", file);
       const { data } = await apiClient.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },

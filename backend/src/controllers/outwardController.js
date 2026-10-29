@@ -1692,7 +1692,7 @@ export async function downloadItemProof(req, res) {
   try {
     const item = await prisma.minItem.findUnique({
       where: { id: req.params.itemId },
-      select: { id: true, minId: true, proofFileKey: true, min: { select: { id: true, warehouseId: true, createdById: true, status: true } } },
+      select: { id: true, minId: true, proofFileKey: true, proofFileName: true, min: { select: { id: true, warehouseId: true, createdById: true, status: true } } },
     });
     if (!item || item.minId !== req.params.id || !item.proofFileKey) return res.status(404).json({ message: "No proof file for this item" });
     await assertEntryVisible(req, item.min);
@@ -1700,7 +1700,7 @@ export async function downloadItemProof(req, res) {
     const asDownload = req.query.download === "1" || req.query.download === "true";
     const { data, error } = await supabase.storage
       .from(SUPABASE_BUCKET)
-      .createSignedUrl(item.proofFileKey, 60 * 5, asDownload ? { download: item.proofFileKey.split("/").pop() || "proof" } : undefined);
+      .createSignedUrl(item.proofFileKey, 60 * 5, asDownload ? { download: item.proofFileName || item.proofFileKey.split("/").pop() || "payment" } : undefined);
     if (error) return res.status(500).json({ message: "Failed to create download link.", error: error.message });
     return res.json({ data: { url: data.signedUrl } });
   } catch (error) {
