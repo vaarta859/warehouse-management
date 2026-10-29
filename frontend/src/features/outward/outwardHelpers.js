@@ -177,6 +177,8 @@ export function formatOutwardEntry(outward, index) {
     outward.vendor?.name ||
     "-";
 
+  const companyName = String(outward.companyName || outward.company_name || outward.company?.name || "").trim();
+
   const createdAt =
     outward.createdAt ||
     outward.created_at ||
@@ -203,6 +205,7 @@ export function formatOutwardEntry(outward, index) {
     outward: outwardNumber,
     type: formatOutwardType(outwardType),
     party,
+    companyName,
     time,
     date,
     quantity,

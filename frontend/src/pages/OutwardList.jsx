@@ -525,46 +525,50 @@ export default function Outward() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left">
+              <table className="w-full min-w-[1000px] whitespace-nowrap text-left">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">w-id</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outward type</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Customer</th>
-                    {showCost && <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">PI amount</th>}
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Date & time</th>
-                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Status</th>
-                    <th className="px-5 py-3"></th>
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">w-id</th>
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Outward type</th>
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Customer</th>
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Company</th>
+                    {showCost && <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">PI amount</th>}
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Date & time</th>
+                    <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Status</th>
+                    <th className="px-3 py-3"></th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
                   {filteredData.map((item) => (
                     <tr key={item.id} onClick={() => openOutward(item)} className="cursor-pointer transition hover:bg-gray-50">
-                      <td className="px-5 py-4">
-                        <p className="text-sm font-semibold text-gray-900">{item.outward}</p>
+                      <td className="px-3 py-4">
+                        <p className="text-xs font-semibold text-gray-900">{item.outward}</p>
                       </td>
-                      <td className="px-5 py-4">
-                        <span className="text-xs text-gray-700">{item.type}</span>
+                      <td className="px-3 py-4">
+                        <span className="text-[11px] text-gray-700">{item.type}</span>
                       </td>
-                      <td className="px-5 py-4">
-                        <span className="text-xs font-medium text-gray-800">{item.party}</span>
+                      <td className="px-3 py-4">
+                        <span className="text-[11px] font-medium text-gray-800">{item.party}</span>
+                      </td>
+                      <td className="px-3 py-4">
+                        <span className="text-[11px] text-gray-700">{item.companyName || "-"}</span>
                       </td>
                       {showCost && (
-                        <td className="px-5 py-4">
-                          <span className="text-sm font-medium text-gray-800">{formatMoney(item.piAmount)}</span>
+                        <td className="px-3 py-4">
+                          <span className="text-xs font-medium text-gray-800">{formatMoney(item.piAmount)}</span>
                         </td>
                       )}
-                      <td className="px-5 py-4">
-                        <p className="text-xs text-gray-700">{item.date}</p>
-                        <p className="text-[11px] text-gray-400">{item.time}</p>
+                      <td className="px-3 py-4">
+                        <p className="text-[11px] text-gray-700">{item.date}</p>
+                        <p className="text-[10px] text-gray-400">{item.time}</p>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-3 py-4">
                         <div className="flex flex-col items-start gap-1">
                           <WorkflowBadge item={item} />
                         </div>
                       </td>
-                      <td className="px-5 py-4 text-right">
+                      <td className="px-3 py-4 text-right">
                         <ChevronRight size={17} className="text-gray-400" />
                       </td>
                     </tr>
@@ -668,7 +672,7 @@ export default function Outward() {
                         </div>
 
                         <p className="mt-1 truncate text-xs text-gray-700">
-                          {item.type} · {item.party}
+                          {item.type} · {item.party}{item.companyName ? ` · ${item.companyName}` : ""}
                         </p>
 
                         <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-gray-400">
