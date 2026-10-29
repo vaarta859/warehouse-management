@@ -174,8 +174,9 @@ export async function uploadFile(
         fileKey:
           data.path,
 
+        // A PI file is always saved under the name "PI" (PI.pdf, PI.jpg ...); other files keep their own name.
         fileName:
-          originalName,
+          isPi ? `PI.${String(extension).toLowerCase()}` : originalName,
 
         fileType,
 

@@ -196,12 +196,13 @@ export const createOutward = createAsyncThunk(
 // Uploads one payment-proof file and returns { fileKey, fileName, fileType }.
 export const uploadOutwardProof = createAsyncThunk(
   "outward/uploadProof",
-  async ({ file, warehouseId, outwardId }, { rejectWithValue }) => {
+  async ({ file, warehouseId, outwardId, kind }, { rejectWithValue }) => {
     try {
       const formData = new FormData();
       // Text fields go first so the server knows the target folder: min/<warehouse>/<outwardId>/
       formData.append("warehouseId", warehouseId);
       formData.append("outwardId", outwardId);
+      if (kind) formData.append("kind", kind); // "pi" -> the file is saved as PI.<ext>
       formData.append("file", file);
       const { data } = await apiClient.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },

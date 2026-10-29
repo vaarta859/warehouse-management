@@ -1715,7 +1715,7 @@ export async function downloadPiFile(req, res) {
   try {
     const min = await prisma.min.findUnique({
       where: { id: req.params.id },
-      select: { id: true, warehouseId: true, createdById: true, status: true, piFileKey: true },
+      select: { id: true, warehouseId: true, createdById: true, status: true, piFileKey: true, piFileName: true },
     });
     if (!min || !min.piFileKey) return res.status(404).json({ message: "No PI file for this entry" });
     await assertEntryVisible(req, min);
@@ -1723,7 +1723,7 @@ export async function downloadPiFile(req, res) {
     const asDownload = req.query.download === "1" || req.query.download === "true";
     const { data, error } = await supabase.storage
       .from(SUPABASE_BUCKET)
-      .createSignedUrl(min.piFileKey, 60 * 5, asDownload ? { download: min.piFileKey.split("/").pop() || "pi-file" } : undefined);
+      .createSignedUrl(min.piFileKey, 60 * 5, asDownload ? { download: min.piFileName || "PI" } : undefined);
     if (error) return res.status(500).json({ message: "Failed to create download link.", error: error.message });
     return res.json({ data: { url: data.signedUrl } });
   } catch (error) {

@@ -487,7 +487,7 @@ export default function OutwardForm() {
 
     const previousKey = piFileRef.current?.fileKey;
     setPiUploading(true);
-    const result = await dispatch(uploadOutwardProof({ file, warehouseId, outwardId }));
+    const result = await dispatch(uploadOutwardProof({ file, warehouseId, outwardId, kind: "pi" }));
     setPiUploading(false);
     if (uploadOutwardProof.fulfilled.match(result)) {
       setPiFile(result.payload);

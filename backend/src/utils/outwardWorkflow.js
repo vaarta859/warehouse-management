@@ -207,7 +207,8 @@ export function toPiColumns(data, previous) {
     piDate: new Date(data.piDate),
     piAmount: Number(data.piAmount),
     piFileKey: keep ? previous.piFileKey : data.piFileKey || null,
-    piFileName: keep ? previous.piFileName : data.piFileKey ? data.piFileName || null : null,
+    // The PI file is always named "PI" (keeping its extension), whatever the original file was called.
+    piFileName: keep ? previous.piFileName : data.piFileKey ? `PI${/\.[a-z0-9]+$/i.test(String(data.piFileKey)) ? String(data.piFileKey).match(/\.[a-z0-9]+$/i)[0].toLowerCase() : ""}` : null,
     piFileType: keep ? previous.piFileType : data.piFileKey ? data.piFileType || null : null,
   };
 }
