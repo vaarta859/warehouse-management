@@ -406,10 +406,9 @@ export function validateTransport(data) {
     if (!has("driverContact")) return "Driver contact is required";
     if (!PHONE_RE.test(String(data.driverContact).trim())) return "Driver contact must be exactly 10 digits";
   } else {
-    if (!has("transporterId")) return "Transporter ID is required";
+    // Only the transporter name is mandatory; ID and contact are optional (a contact, when given, must be 10 digits).
     if (!has("transporterName")) return "Transporter name is required";
-    if (!has("transporterContact")) return "Transporter contact is required";
-    if (!PHONE_RE.test(String(data.transporterContact).trim())) return "Transporter contact must be exactly 10 digits";
+    if (has("transporterContact") && !PHONE_RE.test(String(data.transporterContact).trim())) return "Transporter contact must be exactly 10 digits";
   }
   return null;
 }

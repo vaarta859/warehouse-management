@@ -4,7 +4,7 @@ import { warehouseIdsForCompanies, getWarehouseCompanies, allCompaniesInactive, 
 import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
 import { recordAuditLog, recordAuditLogs, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
 import { storeOutwardFiles } from "./documentController.js";
-import { outwardFolder } from "../utils/outwardWorkflow.js";
+import { outwardFolder, tempProofFolder } from "../utils/outwardWorkflow.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
 import { getWarehouseStock, getWarehouseStockBreakdown, stockKey, OUTWARD_STOCK_SOURCES, findShortages, shortageMessage } from "../utils/stock.js";
 import { canonicalOutwardType } from "../utils/serialSources.js";
@@ -1361,7 +1361,7 @@ export async function saveTransportation(req, res) {
     const base = { entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber, userId: req.user.id, warehouseId: existing.warehouseId };
     const describe = (c) => c.mode === "DEDICATED"
       ? `Dedicated vehicle ${c.vehicleNumber} (driver ${c.driverName}, ${c.driverContact})`
-      : `Transportation ${c.transporterName} (ID ${c.transporterId}, contact ${c.transporterContact})`;
+      : `Transportation ${c.transporterName}${c.transporterId ? ` (ID ${c.transporterId})` : ""}${c.transporterContact ? ` (contact ${c.transporterContact})` : ""}`;
     const entries = isFirstTime
       ? [{ ...base, action: "TRANSPORT_SUBMITTED", description: `Transportation details submitted: ${describe({ ...columns, mode: columns.transportMode })}` }]
       : diffFields(existing, columns, ["transportMode", "dispatchMode", "vehicleNumber", "driverName", "driverContact", "transporterId", "transporterName", "transporterContact"])
@@ -1715,18 +1715,37 @@ export async function downloadPiFile(req, res) {
   try {
     const min = await prisma.min.findUnique({
       where: { id: req.params.id },
-      select: { id: true, warehouseId: true, createdById: true, status: true, piFileKey: true, piFileName: true },
+      select: { id: true, outwardNumber: true, warehouseId: true, createdById: true, status: true, piFileKey: true, piFileName: true },
     });
     if (!min || !min.piFileKey) return res.status(404).json({ message: "No PI file for this entry" });
     await assertEntryVisible(req, min);
 
     const asDownload = req.query.download === "1" || req.query.download === "true";
-    const { data, error } = await supabase.storage
-      .from(SUPABASE_BUCKET)
-      .createSignedUrl(min.piFileKey, 60 * 5, asDownload ? { download: min.piFileName || "PI" } : undefined);
-    if (error) return res.status(500).json({ message: "Failed to create download link.", error: error.message });
-    return res.json({ data: { url: data.signedUrl } });
+    const base = min.piFileKey.split("/").pop();
+    // A new entry's PI waits in uploads/<id>/ and is moved to min/<outward number>/ right after the entry is created
+    // (in the background), so the file can be in either place - try the saved key first, then the other folder.
+    const candidates = [...new Set([
+      min.piFileKey,
+      `${outwardFolder(min.outwardNumber)}${base}`,
+      `${tempProofFolder(min.id)}${base}`,
+    ])];
+
+    let lastError = null;
+    for (const key of candidates) {
+      const { data, error } = await supabase.storage
+        .from(SUPABASE_BUCKET)
+        .createSignedUrl(key, 60 * 5, asDownload ? { download: min.piFileName || "PI" } : undefined);
+      if (!error && data?.signedUrl) {
+        // The file was found somewhere other than the saved key: fix the saved key so the next open is direct.
+        if (key !== min.piFileKey) prisma.min.update({ where: { id: min.id }, data: { piFileKey: key } }).catch(() => {});
+        return res.json({ data: { url: data.signedUrl } });
+      }
+      lastError = error;
+    }
+    console.error("PI file not found in storage:", candidates, lastError?.message);
+    return res.status(404).json({ message: "The PI file could not be found in storage. Please attach the PI file again.", error: lastError?.message });
   } catch (error) {
+    console.error("DOWNLOAD PI FILE ERROR:", error);
     return res.status(error.status || 500).json({ message: error.message || "Failed to download PI file" });
   }
 }

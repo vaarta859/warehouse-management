@@ -24,7 +24,7 @@ import useProducts from "../features/product/useProducts";
  * Opens only after Account has approved the entry. The manager picks the vehicle type:
  *
  *   Dedicated vehicle -> Vehicle no. + Driver name + Driver contact
- *   Transportation    -> Transporter ID + Transporter name
+ *   Transportation    -> Transporter name (ID and contact optional)
  *
  * The same form has the Item details with the serial no. scan: one serial number for every Pcs unit
  * (typed, camera or scanner). Submitting sends the vehicle details AND the serial numbers to the account team, who can then upload Invoice / E-way bill /
@@ -128,10 +128,9 @@ export default function OutwardTransportation() {
       if (!driverContact.trim()) return toast.error("Please enter the driver contact number.");
       if (!PHONE_RE.test(driverContact.trim())) return toast.error("Please enter a driver contact number (10 digits).");
     } else {
-      if (!transporterId.trim()) return toast.error("Please enter the transporter ID.");
       if (!transporterName.trim()) return toast.error("Please enter the transporter name.");
-      if (!transporterContact.trim()) return toast.error("Please enter the transporter contact number.");
-      if (!PHONE_RE.test(transporterContact.trim())) return toast.error("Please enter a transporter contact number (10 digits).");
+      // Transporter ID and contact are optional; a contact, when entered, must be 10 digits.
+      if (transporterContact.trim() && !PHONE_RE.test(transporterContact.trim())) return toast.error("Please enter a valid transporter contact number (10 digits).");
     }
 
     // Every Pcs unit needs its own serial number. Entries submitted before serial numbers moved to this form
@@ -237,9 +236,9 @@ export default function OutwardTransportation() {
 
               {mode === "TRANSPORTATION" && (
                 <>
-                  <div><label className={labelCls}>Transporter ID</label><input value={transporterId} onChange={(e) => setTransporterId(e.target.value)} placeholder="Enter transporter ID" className={inputCls} /></div>
+                  <div><label className={labelCls}>Transporter ID <span className="font-normal text-gray-400">(optional)</span></label><input value={transporterId} onChange={(e) => setTransporterId(e.target.value)} placeholder="Enter transporter ID" className={inputCls} /></div>
                   <div><label className={labelCls}>Transporter name</label><input value={transporterName} onChange={(e) => setTransporterName(e.target.value)} placeholder="Enter transporter name" className={inputCls} /></div>
-                  <div><label className={labelCls}>Transporter contact</label><input type="tel" inputMode="numeric" maxLength={10} value={transporterContact} onChange={(e) => setTransporterContact(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter transporter contact no." className={inputCls} /></div>
+                  <div><label className={labelCls}>Transporter contact <span className="font-normal text-gray-400">(optional)</span></label><input type="tel" inputMode="numeric" maxLength={10} value={transporterContact} onChange={(e) => setTransporterContact(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter transporter contact no." className={inputCls} /></div>
                 </>
               )}
             </div>
