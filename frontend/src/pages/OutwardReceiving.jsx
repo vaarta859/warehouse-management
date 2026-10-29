@@ -101,8 +101,7 @@ export default function OutwardReceiving() {
     if (receivedDate > maxDate) return toast.error("Receiving date cannot be in the future.");
     if (minDate && receivedDate < minDate) return toast.error("Receiving date cannot be before the dispatch date.");
     if (!receiverName.trim()) return toast.error("Please enter the receiver name.");
-    if (!receiverContact.trim()) return toast.error("Please enter the receiver contact number.");
-    if (!PHONE_RE.test(receiverContact.trim())) return toast.error("Please enter a receiver contact number (10 digits).");
+    if (receiverContact.trim() && !PHONE_RE.test(receiverContact.trim())) return toast.error("Please enter a receiver contact number (10 digits).");
 
     setSaving(true);
     const result = await dispatch(
@@ -196,8 +195,8 @@ export default function OutwardReceiving() {
                 <input required value={receiverName} onChange={(e) => setReceiverName(e.target.value)} placeholder="Who received the goods" className={inputCls} />
               </div>
               <div>
-                <label className={labelCls}>Receiver contact <span className="text-red-500">*</span></label>
-                <input required type="tel" inputMode="numeric" maxLength={10} value={receiverContact} onChange={(e) => setReceiverContact(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Receiver contact no." className={inputCls} />
+                <label className={labelCls}>Receiver contact <span className="font-normal text-gray-400">(optional)</span></label>
+                <input type="tel" inputMode="numeric" maxLength={10} value={receiverContact} onChange={(e) => setReceiverContact(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Receiver contact no." className={inputCls} />
               </div>
             </div>
           </section>

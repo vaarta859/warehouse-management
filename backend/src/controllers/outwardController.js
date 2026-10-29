@@ -1436,7 +1436,7 @@ export async function saveReceiving(req, res) {
     const snapshot = {
       receivedDate: new Date(data.receivedDate),
       receiverName: String(data.receiverName).trim(),
-      receiverContact: String(data.receiverContact).trim(),
+      receiverContact: String(data.receiverContact ?? "").trim(),
       receivingRemarks: data.receivingRemarks?.trim() || null,
     };
     const isFirstTime = !existing.receivedAt && !existing.receivedDate;

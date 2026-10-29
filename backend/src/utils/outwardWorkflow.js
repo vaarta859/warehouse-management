@@ -351,8 +351,7 @@ export function validateReceiving(data, dispatchedAt) {
   const name = String(data.receiverName || "").trim();
   if (!name) return "Receiver name is required";
   const contact = String(data.receiverContact || "").trim();
-  if (!contact) return "Receiver contact is required";
-  if (!PHONE_RE.test(contact)) return "Receiver contact must be exactly 10 digits";
+  if (contact && !PHONE_RE.test(contact)) return "Receiver contact must be exactly 10 digits";
   const date = data.receivedDate ? new Date(data.receivedDate) : null;
   if (!date || Number.isNaN(date.getTime())) return "Receiving date is required";
   const endOfToday = new Date();
