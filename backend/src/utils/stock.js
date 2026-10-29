@@ -1,3 +1,17 @@
+import { INWARD, OUTWARD, canonicalInwardType, canonicalOutwardType } from "./serialSources.js";
+
+/**
+ * Which inward stock types the outward form's SKU list counts for each outward type.
+ * Each outward type shows its own stock: Service Stock Out no longer shows New (sale) stock.
+ * (Serial-number scanning keeps its own rules in serialSources.js.)
+ */
+export const OUTWARD_STOCK_SOURCES = {
+  [OUTWARD.SALE]: [INWARD.NEW, INWARD.RETURN],
+  [OUTWARD.SERVICE]: [INWARD.SERVICE, INWARD.FAULTY],
+  [OUTWARD.REPLACEMENT]: [INWARD.SERVICE, INWARD.REPAIR],
+  [OUTWARD.SCRAP]: [INWARD.FAULTY],
+};
+
 /**
  * =========================================================
  * STOCK HELPERS
@@ -140,4 +154,85 @@ export function shortageMessage(shortages) {
       : `"${s.sku}" (${s.category}): requested ${s.requested}, only ${s.available} available`
   );
   return `Not enough stock - ${lines.join("; ")}.`;
+}
+
+const companyKeyOf = (name) => String(name || "").trim().toLowerCase();
+
+/**
+ * Stock of one warehouse split up for DISPLAY: per category + SKU, then per company, then per inward type
+ * (New, Service, Return, Faulty, Repair). There is no grand total on purpose.
+ *
+ * Inward is counted per company + inward type. Outward is not stored against an inward type, so each
+ * outward entry is taken from the inward types its outward type may use (same rules as the serial sources:
+ * Sale <- New / Return, Service <- New / Faulty, Replacement <- Service / Repair, Scrap <- Faulty),
+ * in that order. Rejected entries hold no stock. This is for showing only - the stock check when saving
+ * still uses getWarehouseStock.
+ *
+ * Returns Map<stockKey, [{ companyName, type, quantity }]> (only quantities above 0).
+ */
+export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwardId } = {}) {
+  const inwardRows = await db.grnItem.findMany({
+    where: { grn: { warehouseId } },
+    select: { category: true, sku: true, quantity: true, companyName: true, grn: { select: { inwardType: true, companyName: true } } },
+  });
+  const outwardRows = await db.minItem.findMany({
+    where: {
+      min: {
+        warehouseId,
+        status: { not: "REJECTED" },
+        ...(excludeOutwardId ? { id: { not: excludeOutwardId } } : {}),
+      },
+    },
+    select: { category: true, sku: true, quantity: true, min: { select: { outwardType: true, companyName: true } } },
+  });
+
+  // key -> companyKey -> { companyName, types: Map<type, qty> }
+  const groups = new Map();
+  const groupFor = (key, companyName) => {
+    if (!groups.has(key)) groups.set(key, new Map());
+    const byCompany = groups.get(key);
+    const ck = companyKeyOf(companyName);
+    if (!byCompany.has(ck)) byCompany.set(ck, { companyName: String(companyName || "").trim(), types: new Map(), outward: [] });
+    return byCompany.get(ck);
+  };
+
+  for (const row of inwardRows) {
+    const qty = Number(row.quantity) || 0;
+    if (!qty) continue;
+    const type = canonicalInwardType(row.grn?.inwardType) || INWARD.NEW;
+    const group = groupFor(stockKey(row.category, row.sku), row.grn?.companyName || row.companyName);
+    group.types.set(type, (group.types.get(type) || 0) + qty);
+  }
+  for (const row of outwardRows) {
+    const qty = Number(row.quantity) || 0;
+    if (!qty) continue;
+    const key = stockKey(row.category, row.sku);
+    // Outward of a company that has no inward row of its own is ignored here (nothing to take it from).
+    const group = groups.get(key)?.get(companyKeyOf(row.min?.companyName));
+    if (group) group.outward.push({ outwardType: canonicalOutwardType(row.min?.outwardType), qty });
+  }
+
+  const result = new Map();
+  for (const [key, byCompany] of groups) {
+    const lines = [];
+    for (const group of byCompany.values()) {
+      for (const { outwardType, qty } of group.outward) {
+        let left = qty;
+        const preferred = OUTWARD_STOCK_SOURCES[outwardType] || [];
+        const order = [...preferred, ...[...group.types.keys()].filter((t) => !preferred.includes(t))];
+        for (const type of order) {
+          if (left <= 0) break;
+          const have = group.types.get(type) || 0;
+          const take = Math.min(have, left);
+          if (take > 0) { group.types.set(type, have - take); left -= take; }
+        }
+      }
+      for (const [type, quantity] of group.types) {
+        if (quantity > 0) lines.push({ companyName: group.companyName, type, quantity });
+      }
+    }
+    lines.sort((a, b) => a.companyName.localeCompare(b.companyName) || a.type.localeCompare(b.type));
+    result.set(key, lines);
+  }
+  return result;
 }

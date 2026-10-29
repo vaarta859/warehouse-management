@@ -391,7 +391,7 @@ export default function OutwardForm() {
 
   // ---- Stock in the selected warehouse -------------------------------------
   // Editing: this entry's own quantities count as available again (server-side).
-  const { rows: stockRows, status: stockStatus, reload: reloadStock } = useOutwardStock(warehouseId, editId);
+  const { rows: stockRows, status: stockStatus, reload: reloadStock } = useOutwardStock(warehouseId, editId, companyName, outwardType);
   const stockByKey = useMemo(() => new Map(stockRows.map((r) => [stockKey(r.category, r.sku), r])), [stockRows]);
   const originalQtyByKey = useMemo(() => {
     const totals = new Map();

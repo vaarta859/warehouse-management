@@ -22,7 +22,7 @@ export const stockKey = (category, sku) =>
  * every inward / outward, so it is deliberately not cached in the store.
  * The server re-checks it when the entry is saved, so this is for guidance.
  */
-export default function useOutwardStock(warehouseId, excludeOutwardId) {
+export default function useOutwardStock(warehouseId, excludeOutwardId, companyName, outwardType) {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("idle");
   const latestRequest = useRef(0);
@@ -38,7 +38,7 @@ export default function useOutwardStock(warehouseId, excludeOutwardId) {
     setStatus("loading");
     try {
       const { data } = await apiClient.get("/api/outward/stock", {
-        params: { warehouseId, excludeOutwardId: excludeOutwardId || undefined },
+        params: { warehouseId, excludeOutwardId: excludeOutwardId || undefined, companyName: companyName || undefined, outwardType: outwardType || undefined },
       });
       if (requestId !== latestRequest.current) return; // a newer request took over
       setRows(Array.isArray(data) ? data : data.data || []);
@@ -48,7 +48,7 @@ export default function useOutwardStock(warehouseId, excludeOutwardId) {
       setRows([]);
       setStatus("failed");
     }
-  }, [warehouseId, excludeOutwardId]);
+  }, [warehouseId, excludeOutwardId, companyName, outwardType]);
 
   useEffect(() => {
     load();

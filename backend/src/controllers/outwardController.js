@@ -6,7 +6,8 @@ import { recordAuditLog, recordAuditLogs, diffFields, diffItems, describeItem } 
 import { storeOutwardFiles } from "./documentController.js";
 import { outwardFolder } from "../utils/outwardWorkflow.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
-import { getWarehouseStock, findShortages, shortageMessage } from "../utils/stock.js";
+import { getWarehouseStock, getWarehouseStockBreakdown, stockKey, OUTWARD_STOCK_SOURCES, findShortages, shortageMessage } from "../utils/stock.js";
+import { canonicalOutwardType } from "../utils/serialSources.js";
 import { cleanSerials, validateSerials, replaceSerials, pruneSerials } from "../utils/serials.js";
 import { findSerialSourceProblem, listAvailableSerials, listBlockedSerials } from "../utils/serialSources.js";
 import {
@@ -382,12 +383,25 @@ export async function getOutwardById(req, res) {
  */
 export async function listOutwardStock(req, res) {
   try {
-    const { warehouseId, excludeOutwardId } = req.query;
+    const { warehouseId, excludeOutwardId, companyName, outwardType } = req.query;
     await assertWarehouseAccess(req, warehouseId, null);
-    const stock = await getWarehouseStock(prisma, warehouseId, { excludeOutwardId: excludeOutwardId || undefined });
+    const [stock, breakdown] = await Promise.all([
+      getWarehouseStock(prisma, warehouseId, { excludeOutwardId: excludeOutwardId || undefined }),
+      getWarehouseStockBreakdown(prisma, warehouseId, { excludeOutwardId: excludeOutwardId || undefined }),
+    ]);
+    // Quantity shown = stock of the SELECTED company, in this warehouse, from the inward types
+    // (New / Service / Return ...) the selected outward type is allowed to take from.
+    const company = String(companyName || "").trim().toLowerCase();
+    const allowedTypes = OUTWARD_STOCK_SOURCES[canonicalOutwardType(outwardType)] || null;
     const data = Array.from(stock.values())
+      .map(({ category, sku, uom }) => {
+        const lines = breakdown.get(stockKey(category, sku)) || [];
+        const available = lines
+          .filter((l) => (!company || String(l.companyName || "").trim().toLowerCase() === company) && (!allowedTypes || allowedTypes.includes(l.type)))
+          .reduce((sum, l) => sum + l.quantity, 0);
+        return { category, sku, uom, available };
+      })
       .filter((row) => row.available > 0)
-      .map(({ category, sku, uom, available }) => ({ category, sku, uom, available }))
       .sort((a, b) => a.category.localeCompare(b.category) || a.sku.localeCompare(b.sku));
     return res.json({ data });
   } catch (error) {
@@ -395,7 +409,7 @@ export async function listOutwardStock(req, res) {
     return res.status(error.status || 500).json({ message: error.message || "Failed to fetch stock" });
   }
 }
- 
+
 export async function listOutwardModels(req, res) {
   try {
     const { warehouseId } = req.query;
