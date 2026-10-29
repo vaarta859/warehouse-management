@@ -67,10 +67,10 @@ export const fetchStockLedger = createAsyncThunk(
   "reports/fetchStockLedger",
   // warehouseId -> that warehouse; companyId only -> that company's warehouses;
   // neither -> total stock across everything the user can see.
-  async ({ warehouseId, companyId, search, page, pageSize } = {}, { rejectWithValue }) => {
+  async ({ warehouseId, companyId, stockType, search, page, pageSize } = {}, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.get("/api/reports/stock-ledger", {
-        params: { warehouseId, companyId, search, page, pageSize },
+        params: { warehouseId, companyId, stockType: stockType || undefined, search, page, pageSize },
       });
       return {
         rows: data.data || [],

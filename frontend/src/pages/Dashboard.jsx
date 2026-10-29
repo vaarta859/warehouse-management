@@ -94,6 +94,18 @@ const timeText = (value) =>
 
 const num = (n) => Number(n || 0).toLocaleString("en-IN");
 
+// Quantities of a list of items with their unit of measure, never "units": "120 Pcs · 500 Meters".
+const qtyText = (items) => {
+  const byUom = new Map();
+  (Array.isArray(items) ? items : []).forEach((i) => {
+    const qty = Number(i.quantity) || 0;
+    if (!qty) return;
+    const uom = i.uom || "Pcs";
+    byUom.set(uom, (byUom.get(uom) || 0) + qty);
+  });
+  return byUom.size ? [...byUom].map(([uom, qty]) => `${num(qty)} ${uom}`).join(" · ") : "0";
+};
+
 // =====================================================
 // DASHBOARD
 // =====================================================
@@ -163,7 +175,7 @@ export default function Dashboard() {
   const kpis = useMemo(() => {
     const inToday = inward.filter((e) => dayKey(e.createdAt) === todayKey);
     const outToday = outward.filter((e) => dayKey(e.createdAt) === todayKey);
-    const sum = (list) => list.reduce((t, e) => t + (Number(e.quantity) || 0), 0);
+    const sum = (list) => qtyText(list.flatMap((e) => e.items || []));
 
     const outOpen = outward.filter((e) => {
       const label = getStatusStyle(e)?.label;
@@ -207,6 +219,7 @@ export default function Dashboard() {
       party: e.party,
       type: e.type,
       quantity: e.quantity,
+      items: e.items,
       date: e.createdAt,
       status: e.status,
       statusType: e.statusType,
@@ -220,6 +233,7 @@ export default function Dashboard() {
         party: e.party,
         type: e.type,
         quantity: e.quantity,
+        items: e.items,
         date: e.createdAt,
         status: style?.label || e.status,
         cls: style?.cls,
@@ -320,7 +334,7 @@ export default function Dashboard() {
             icon={ArrowDownToLine}
             label="Inward today"
             value={kpis.inToday}
-            note={`${num(kpis.inTodayUnits)} units received`}
+            note={`${kpis.inTodayUnits} received`}
             tone={{ bg: "#ECFDF5", fg: "#047857", solid: "#10B981" }}
           />
           <Kpi
@@ -328,7 +342,7 @@ export default function Dashboard() {
             icon={ArrowUpFromLine}
             label="Outward today"
             value={kpis.outToday}
-            note={`${num(kpis.outTodayUnits)} units sent`}
+            note={`${kpis.outTodayUnits} sent`}
             tone={{ bg: "#FFFBEB", fg: "#B45309", solid: "#F59E0B" }}
           />
           <Kpi
@@ -378,7 +392,7 @@ export default function Dashboard() {
                           <span className="ml-2 font-normal text-slate-500">{a.party}</span>
                         </p>
                         <p className="truncate text-xs text-slate-500">
-                          {a.type} · {num(a.quantity)} units · {timeText(a.date)}
+                          {a.type} · {qtyText(a.items)} · {timeText(a.date)}
                         </p>
                       </div>
   

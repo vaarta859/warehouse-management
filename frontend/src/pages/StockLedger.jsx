@@ -17,6 +17,13 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString("en-IN");
 }
 
+// { Pcs: 120, Meters: 500 } -> "120 Pcs · 500 Meters": quantities are shown with their unit of measure, never as "units".
+function formatByUom(byUom, fallback = 0) {
+  const entries = Object.entries(byUom || {}).filter(([, qty]) => Number(qty) !== 0);
+  if (!entries.length) return formatNumber(fallback);
+  return entries.map(([uom, qty]) => `${formatNumber(qty)} ${uom}`).join(" · ");
+}
+
 function TotalCard({ icon: Icon, iconClass, label, value }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -48,6 +55,7 @@ export default function StockLedger() {
 
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [stockType, setStockType] = useState(""); // "" = all stock types (New / Service / Return / Faulty / Repair)
 
   // Company -> warehouse. Both empty = total stock across everything the user
   // can see. These are local to this page (they don't change the navbar's warehouse).
@@ -111,18 +119,13 @@ export default function StockLedger() {
     setPage(1);
   };
 
-  const showTotalStock = () => {
-    setCompanyId("");
-    setWarehouseId("");
-    setPage(1);
-  };
-
   const scopeWarehouseId = isManager ? navbarWarehouse?.id : warehouseId || undefined;
   const scopeCompanyId = isManager ? undefined : companyId || undefined;
 
   const ledgerParams = {
     warehouseId: scopeWarehouseId,
     companyId: scopeCompanyId,
+    stockType,
     search,
     page,
     pageSize: 20,
@@ -143,6 +146,7 @@ export default function StockLedger() {
         fetchStockLedger({
           warehouseId: scopeWarehouseId,
           companyId: scopeCompanyId,
+          stockType,
           search,
           page,
           pageSize: 20,
@@ -150,7 +154,7 @@ export default function StockLedger() {
       );
     }, 300);
     return () => clearTimeout(timer);
-  }, [dispatch, isManager, scopeWarehouseId, scopeCompanyId, search, page]);
+  }, [dispatch, isManager, scopeWarehouseId, scopeCompanyId, stockType, search, page]);
 
   // Switching warehouse in the navbar starts again from page 1.
   useEffect(() => {
@@ -159,6 +163,28 @@ export default function StockLedger() {
 
   const selectCls =
     "w-full appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400";
+
+
+  const stockTypeField = (
+    <div>
+      <label className="mb-1.5 block text-sm font-semibold text-black">Stock type</label>
+      <div className="relative">
+        <select
+          value={stockType}
+          onChange={(e) => { setStockType(e.target.value); setPage(1); }}
+          className={selectCls}
+        >
+          <option value="">All stock types</option>
+          <option value="New">New</option>
+          <option value="Service">Service</option>
+          <option value="Return">Return</option>
+          <option value="Faulty">Faulty</option>
+          <option value="Repair">Repair</option>
+        </select>
+        <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-dvh bg-[#F1EFE8] p-4 sm:p-6">
@@ -196,7 +222,7 @@ export default function StockLedger() {
         ================================================= */}
 
         {!isManager && (
-        <div className="mb-6 grid grid-cols-1 items-end gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-[1fr_1fr_auto]">
+        <div className="mb-6 grid grid-cols-1 items-end gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-3">
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-black">Company</label>
             <div className="relative">
@@ -228,15 +254,14 @@ export default function StockLedger() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={showTotalStock}
-            disabled={!companyId && !warehouseId}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Show total stock
-          </button>
+          {stockTypeField}
         </div>
+        )}
+
+        {isManager && (
+          <div className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-3">
+            {stockTypeField}
+          </div>
         )}
 
         <>
@@ -249,19 +274,19 @@ export default function StockLedger() {
                 icon={Warehouse}
                 iconClass="text-purple-600"
                 label="Current Stock"
-                value={loading && !totals ? "—" : `${formatNumber(totals?.currentStock)} units`}
+                value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.currentStock])), totals?.currentStock)}
               />
               <TotalCard
                 icon={PackagePlus}
                 iconClass="text-green-600"
                 label="Total Inward (all-time)"
-                value={loading && !totals ? "—" : formatNumber(totals?.totalInward)}
+                value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.totalInward])), totals?.totalInward)}
               />
               <TotalCard
                 icon={PackageMinus}
                 iconClass="text-amber-600"
                 label="Total Outward (all-time)"
-                value={loading && !totals ? "—" : formatNumber(totals?.totalOutward)}
+                value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.totalOutward])), totals?.totalOutward)}
               />
             </div>
 
@@ -302,11 +327,14 @@ export default function StockLedger() {
 
               {!loading && rows.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="mobile-cards w-full min-w-[620px] text-left">
+                  <table className="mobile-cards w-full min-w-[920px] text-left">
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Category</th>
                         <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Model / SKU</th>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Company</th>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Warehouse</th>
+                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Stock type</th>
                         <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">UOM</th>
                         <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Inward</th>
                         <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outward</th>
@@ -315,9 +343,12 @@ export default function StockLedger() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {rows.map((row) => (
-                        <tr key={`${row.category}-${row.sku}`}>
+                        <tr key={`${row.companyName}-${row.warehouseId}-${row.category}-${row.sku}-${row.stockType}`}>
                           <td className="px-5 py-3.5 text-xs text-gray-700">{row.category}</td>
                           <td className="px-5 py-3.5 text-xs font-medium text-gray-800">{row.sku}</td>
+                          <td data-label="Company" className="px-5 py-3.5 text-xs text-gray-700">{row.companyName || "-"}</td>
+                          <td data-label="Warehouse" className="px-5 py-3.5 text-xs text-gray-700">{row.warehouseName || "-"}</td>
+                          <td data-label="Stock type" className="px-5 py-3.5 text-xs font-medium text-gray-800">{row.stockType}</td>
                           <td className="px-5 py-3.5 text-xs text-gray-500">{row.uom}</td>
                           <td className="px-5 py-3.5 text-right text-xs font-semibold text-green-700">+{formatNumber(row.inward)}</td>
                           <td className="px-5 py-3.5 text-right text-xs font-semibold text-red-600">-{formatNumber(row.outward)}</td>

@@ -247,6 +247,13 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString("en-IN");
 }
 
+// { Pcs: 120, Meters: 500 } -> "120 Pcs · 500 Meters": quantities are shown with their unit of measure, never as "units".
+function formatByUom(byUom, fallback = 0) {
+  const entries = Object.entries(byUom || {}).filter(([, qty]) => Number(qty) !== 0);
+  if (!entries.length) return formatNumber(fallback);
+  return entries.map(([uom, qty]) => `${formatNumber(qty)} ${uom}`).join(" · ");
+}
+
 function StatCard({ icon: Icon, iconClass, label, value, note, full }) {
   return (
     <div className={`rounded-xl border border-gray-200 bg-white p-4 ${full ? "col-span-2" : ""}`}>
@@ -382,8 +389,8 @@ export default function Reports() {
             icon={Warehouse}
             iconClass="text-purple-600"
             label="Total Stock"
-            value={loadingSummary ? "—" : `${formatNumber(summary?.totalStock)} units`}
-            note="units on hand"
+            value={loadingSummary ? "—" : formatByUom(summary?.stockByUom, summary?.totalStock)}
+            note="on hand"
           />
 
           <StatCard
@@ -397,16 +404,16 @@ export default function Reports() {
             icon={PackagePlus}
             iconClass="text-green-600"
             label="Total Inwards"
-            value={loadingSummary ? "—" : formatNumber(summary?.totalInwardUnits)}
-            note="units received"
+            value={loadingSummary ? "—" : formatByUom(summary?.inwardByUom, summary?.totalInwardUnits)}
+            note="received"
           />
 
           <StatCard
             icon={PackageMinus}
             iconClass="text-amber-600"
             label="Total Outwards"
-            value={loadingSummary ? "—" : formatNumber(summary?.totalOutwardUnits)}
-            note="units issued"
+            value={loadingSummary ? "—" : formatByUom(summary?.outwardByUom, summary?.totalOutwardUnits)}
+            note="issued"
           />
           <StatCard
             icon={FileWarning}

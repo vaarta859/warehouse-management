@@ -1,6 +1,8 @@
 import prisma from "../config/prisma.js";
 import { warehouseIdsForCompanies } from "../utils/warehouseCompanies.js";
 import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
+import { INWARD, canonicalInwardType, canonicalOutwardType } from "../utils/serialSources.js";
+import { OUTWARD_STOCK_SOURCES } from "../utils/stock.js";
  
 /**
  * =========================================================
@@ -127,22 +129,37 @@ export async function getReportSummary(req, res) {
  
     // ---- units currently on hand (all-time) ----
     const [stockIn, stockOut] = await Promise.all([
-      prisma.grnItem.aggregate({ _sum: { quantity: true }, where: scopeGrn }),
-      prisma.minItem.aggregate({ _sum: { quantity: true }, where: scopeMin }),
+      prisma.grnItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeGrn }),
+      prisma.minItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeMin }),
     ]);
-    const totalStock = (stockIn._sum.quantity || 0) - (stockOut._sum.quantity || 0);
- 
+    // Quantities are kept per unit of measure (Pcs, Meters ...) - cables are not "units".
+    const byUom = (groups) => {
+      const out = {};
+      for (const g of groups) out[g.uom || "Pcs"] = (out[g.uom || "Pcs"] || 0) + (g._sum.quantity || 0);
+      return out;
+    };
+    const sumOf = (obj) => Object.values(obj).reduce((a, b) => a + b, 0);
+    const inwardAll = byUom(stockIn);
+    const outwardAll = byUom(stockOut);
+    const stockByUom = {};
+    for (const u of new Set([...Object.keys(inwardAll), ...Object.keys(outwardAll)])) {
+      stockByUom[u] = (inwardAll[u] || 0) - (outwardAll[u] || 0);
+    }
+    const totalStock = sumOf(stockByUom);
+
     // ---- entries within the selected period ----
     // Sum in the database instead of pulling every GRN/outward row (with its
     // full item list) into Node just to add them up - this used to fetch
     // every transaction ever made in the selected range on every summary
     // load, which only got slower as the business grew.
     const [inwardAgg, outwardAgg, grnCount, minCount] = await Promise.all([
-      prisma.grnItem.aggregate({
+      prisma.grnItem.groupBy({
+        by: ["uom"],
         _sum: { quantity: true },
         where: { grn: { ...warehouseWhere(warehouseIds), ...period } },
       }),
-      prisma.minItem.aggregate({
+      prisma.minItem.groupBy({
+        by: ["uom"],
         _sum: { quantity: true },
         where: { min: { ...warehouseWhere(warehouseIds), ...period } },
       }),
@@ -150,8 +167,10 @@ export async function getReportSummary(req, res) {
       prisma.min.count({ where: { ...warehouseWhere(warehouseIds), ...period } }),
     ]);
 
-    const totalInwardUnits = inwardAgg._sum.quantity || 0;
-    const totalOutwardUnits = outwardAgg._sum.quantity || 0;
+    const inwardByUom = byUom(inwardAgg);
+    const outwardByUom = byUom(outwardAgg);
+    const totalInwardUnits = sumOf(inwardByUom);
+    const totalOutwardUnits = sumOf(outwardByUom);
     const totalTransactions = grnCount + minCount;
 
     // ---- documents pending, across this period's entries ----
@@ -189,6 +208,9 @@ export async function getReportSummary(req, res) {
     return res.json({
       data: {
         totalStock,
+        stockByUom,
+        inwardByUom,
+        outwardByUom,
         totalTransactions,
         totalInwardUnits,
         totalOutwardUnits,
@@ -295,7 +317,7 @@ export async function getReportLedger(req, res) {
  */
 export async function getStockLedger(req, res) {
   try {
-    const { warehouseId, companyId, search = "", page = "1", pageSize = "20" } = req.query;
+    const { warehouseId, companyId, stockType = "", search = "", page = "1", pageSize = "20" } = req.query;
 
     // One warehouse, or (no warehouse chosen) everything the caller may see.
     // Throws a 403 if a manager asks for a warehouse they don't manage.
@@ -340,50 +362,114 @@ export async function getStockLedger(req, res) {
         }
       : {};
  
-    const [inwardGroups, outwardGroups] = await Promise.all([
-      prisma.grnItem.groupBy({
-        by: ["category", "sku", "uom"],
+    // Stock is split by company, warehouse and stock type (New / Service / Return / Faulty / Repair).
+    // Outward entries don't record which inward type they were taken from, so each one is taken from the
+    // types its outward type uses (Sale <- New / Return, Service <- Service / Faulty, Replacement <- Service /
+    // Repair, Scrap <- Faulty) - the same rule as the outward form's stock list.
+    const [inwardRows, outwardRows] = await Promise.all([
+      prisma.grnItem.findMany({
         where: { grn: { AND: [warehouseWhere(warehouseIds), companyFilter] }, ...searchWhere },
-        _sum: { quantity: true },
+        select: { category: true, sku: true, uom: true, quantity: true, companyName: true, grn: { select: { warehouseId: true, inwardType: true, companyName: true } } },
       }),
-      prisma.minItem.groupBy({
-        by: ["category", "sku", "uom"],
+      prisma.minItem.findMany({
         // A rejected outward never leaves the warehouse, so it is not counted (same rule as the outward form).
         where: { min: { AND: [warehouseWhere(warehouseIds), companyFilter], status: { not: "REJECTED" } }, ...searchWhere },
-        _sum: { quantity: true },
+        select: { category: true, sku: true, uom: true, quantity: true, min: { select: { warehouseId: true, outwardType: true, companyName: true } } },
       }),
     ]);
- 
-    // Merge on category + sku (across warehouses too, when more than one is in
-    // scope, so "total stock" shows one row per model). Items no longer carry a company, and older
-    // entries that still have one must land in the same row as newer ones,
-    // otherwise stock would show up split (inward under a brand, outward under "-").
-    const key = (row) => `${row.category}::${row.sku}`;
-    const merged = new Map();
 
-    const addRow = (row, field) => {
-      const k = key(row);
-      const existing = merged.get(k);
-      const qty = row._sum.quantity || 0;
-      if (existing) {
-        existing[field] += qty;
-      } else {
-        merged.set(k, {
+    const TYPE_LABELS = {
+      [INWARD.NEW]: "New",
+      [INWARD.SERVICE]: "Service",
+      [INWARD.RETURN]: "Return",
+      [INWARD.FAULTY]: "Faulty",
+      [INWARD.REPAIR]: "Repair",
+    };
+    const norm = (v) => String(v || "").trim().toLowerCase();
+    const groups = new Map(); // company | warehouse | category | sku -> { ..., inward: Map<type, qty>, outward: [...] }
+    const groupFor = (row, warehouseId, companyName) => {
+      const k = [norm(companyName), warehouseId, norm(row.category), norm(row.sku)].join("::");
+      if (!groups.has(k)) {
+        groups.set(k, {
+          companyName: String(companyName || "").trim(),
+          warehouseId,
           category: row.category,
           sku: row.sku,
           uom: row.uom,
-          inward: field === "inward" ? qty : 0,
-          outward: field === "outward" ? qty : 0,
+          inward: new Map(),
+          outwardList: [],
         });
       }
+      return groups.get(k);
     };
 
-    for (const row of inwardGroups) addRow(row, "inward");
-    for (const row of outwardGroups) addRow(row, "outward");
+    for (const row of inwardRows) {
+      const qty = Number(row.quantity) || 0;
+      if (!qty) continue;
+      const g = groupFor(row, row.grn?.warehouseId, row.grn?.companyName || row.companyName);
+      const type = canonicalInwardType(row.grn?.inwardType) || INWARD.NEW;
+      g.inward.set(type, (g.inward.get(type) || 0) + qty);
+    }
+    for (const row of outwardRows) {
+      const qty = Number(row.quantity) || 0;
+      if (!qty) continue;
+      const g = groupFor(row, row.min?.warehouseId, row.min?.companyName);
+      g.outwardList.push({ outwardType: canonicalOutwardType(row.min?.outwardType), qty });
+    }
 
-    const allRows = Array.from(merged.values())
-      .map((row) => ({ ...row, currentStock: row.inward - row.outward }))
-      .sort((a, b) => a.category.localeCompare(b.category) || a.sku.localeCompare(b.sku));
+    const warehouseIdsInUse = [...new Set([...groups.values()].map((g) => g.warehouseId).filter(Boolean))];
+    const warehouseRows = warehouseIdsInUse.length
+      ? await prisma.warehouse.findMany({ where: { id: { in: warehouseIdsInUse } }, select: { id: true, name: true, code: true } })
+      : [];
+    const warehouseNames = new Map(warehouseRows.map((w) => [w.id, w.name]));
+
+    const ledgerRows = [];
+    for (const g of groups.values()) {
+      const outwardByType = new Map();
+      for (const { outwardType, qty } of g.outwardList) {
+        let left = qty;
+        const preferred = OUTWARD_STOCK_SOURCES[outwardType] || [];
+        const order = [...preferred, ...[...g.inward.keys()].filter((t) => !preferred.includes(t))];
+        for (const type of order) {
+          if (left <= 0) break;
+          const used = outwardByType.get(type) || 0;
+          const take = Math.min(Math.max((g.inward.get(type) || 0) - used, 0), left);
+          if (take > 0) { outwardByType.set(type, used + take); left -= take; }
+        }
+        // More went out than came in: show it against the type this outward normally takes from (negative stock).
+        if (left > 0) {
+          const type = preferred[0] || INWARD.NEW;
+          outwardByType.set(type, (outwardByType.get(type) || 0) + left);
+        }
+      }
+      for (const type of new Set([...g.inward.keys(), ...outwardByType.keys()])) {
+        const inward = g.inward.get(type) || 0;
+        const outward = outwardByType.get(type) || 0;
+        ledgerRows.push({
+          companyName: g.companyName,
+          warehouseId: g.warehouseId,
+          warehouseName: warehouseNames.get(g.warehouseId) || "",
+          category: g.category,
+          sku: g.sku,
+          uom: g.uom,
+          stockType: TYPE_LABELS[type] || type,
+          inward,
+          outward,
+          currentStock: inward - outward,
+        });
+      }
+    }
+
+    // Optional stock type filter (New / Service / Return / Faulty / Repair) - totals and pages follow it.
+    const wantedType = String(stockType).trim().toLowerCase();
+    const allRows = (wantedType ? ledgerRows.filter((r) => r.stockType.toLowerCase() === wantedType) : ledgerRows).sort(
+      (a, b) =>
+        a.companyName.localeCompare(b.companyName) ||
+        a.warehouseName.localeCompare(b.warehouseName) ||
+        a.category.localeCompare(b.category) ||
+        a.sku.localeCompare(b.sku) ||
+        a.stockType.localeCompare(b.stockType)
+    );
  
     const totals = allRows.reduce(
       (acc, row) => {
@@ -394,6 +480,16 @@ export async function getStockLedger(req, res) {
       },
       { totalInward: 0, totalOutward: 0, currentStock: 0 }
     );
+    // Same totals per unit of measure, so meters and pieces are never added together.
+    const totalsByUom = {};
+    for (const row of allRows) {
+      const u = row.uom || "Pcs";
+      const t = (totalsByUom[u] ||= { totalInward: 0, totalOutward: 0, currentStock: 0 });
+      t.totalInward += row.inward;
+      t.totalOutward += row.outward;
+      t.currentStock += row.currentStock;
+    }
+    totals.byUom = totalsByUom;
  
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const pageSizeNum = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 100);
