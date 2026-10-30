@@ -245,8 +245,9 @@ export default function OutwardDetail() {
   // Sales / Account get it once dispatched; the admin from dispatch details onwards; the warehouse manager always.
   // Sales / Account only see their own part, never the documents or dispatch details.
   // Hidden until the entry is dispatched (before that there are no dispatch documents to show).
-  const showDocuments = dispatched && docsStage && (isSuperAdmin || isWarehouse) && (!isWarehouse || dispatchOpen);
-  const showDispatchInfo = (isWarehouse && dispatchOpen) || (isSuperAdmin && dispatched);
+  // Sales sees everything about the entry (view only): documents, transportation, dispatch and receiving details.
+  const showDocuments = isSales || (dispatched && docsStage && (isSuperAdmin || isWarehouse) && (!isWarehouse || dispatchOpen));
+  const showDispatchInfo = (isWarehouse && dispatchOpen) || (isSuperAdmin && dispatched) || isSales;
   const received = isReceived(outward);
   const statusStyle = getStatusStyle(outward);
 
@@ -324,7 +325,7 @@ export default function OutwardDetail() {
                 <button type="button" onClick={() => navigate(`/outward/${id}/edit`)} className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 font-semibold text-white hover:bg-black sm:text-sm">Update</button>
               )}
               {/* Download: only once the entry is fully dispatched, and only for the admin / warehouse manager. Sales and Account never get it. */}
-              {dispatched && received && (isSuperAdmin || isWarehouse) && (
+              {dispatched && received && (isSuperAdmin || isWarehouse || isSales) && (
                 <button type="button" aria-label="Download PDF" title="Download PDF" onClick={() => downloadOutwardPdf(outward, items, docsStage && showDocuments ? documentRows : [], currentStatus, { includeDispatch: showDispatchInfo || showDocuments, includeCost: showCost })} className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 font-medium text-gray-700 hover:bg-gray-50 sm:text-sm"><Download size={15} /><span className="hidden sm:inline">Download</span></button>
               )}
             </div>
@@ -370,7 +371,7 @@ export default function OutwardDetail() {
             <Info label="Bill to - Email" value={outward.billToEmail || "-"} />
             <Info
               icon={<Calendar size={18} />}
-              label={dispatched && (isSuperAdmin || isWarehouse) ? "Dispatch Date" : "Outward Date"}
+              label={dispatched && (isSuperAdmin || isWarehouse || isSales) ? "Dispatch Date" : "Outward Date"}
               value={outward.refDocDate ? new Date(outward.refDocDate).toLocaleDateString("en-IN") : "-"}
             />
             {showDispatchInfo && (
@@ -433,7 +434,7 @@ export default function OutwardDetail() {
         </div>
 
         {/* Transportation details: warehouse manager, Account and Super admin (not Sales). */}
-        {transportSubmitted && !isSales && (
+        {transportSubmitted && (
           <div className="rounded-xl border bg-white p-4 sm:p-6">
             <h2 className="mb-4 text-base font-semibold text-gray-900 sm:text-lg">Transportation</h2>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5">

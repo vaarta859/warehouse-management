@@ -208,7 +208,8 @@ function finishFor(req, entry, allDocs) {
   // not see the documents section while the entry is still at the approval
   // stage (PENDING_APPROVAL / REJECTED) - only from dispatch details onwards.
   let docsVisible = true;
-  if (isFinanceSide(req.user.role)) docsVisible = isDispatchedStatus(entry.status);
+  if (req.user.role === "ACCOUNT") docsVisible = isDispatchedStatus(entry.status);
+  // Sales sees every document of its entries (view only).
   else if (req.user.role === "SUPER_ADMIN") docsVisible = isApprovedStatus(entry.status) || isDispatchedStatus(entry.status);
   let docs = docsVisible ? allDocs : [];
   // Warehouse manager: sees every document and reference Account has added, the Invoice included.

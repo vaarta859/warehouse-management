@@ -71,10 +71,7 @@ async function assertLinkedEntryAccess(req, linkedType, linkedId, permission = n
     if (permission || !sharesCompany(warehouseCompanies, companyIds)) {
       throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
     }
-    // Dispatch documents open up only after the warehouse manager has dispatched.
-    if (linkedType === "outward" && !isDispatchedStatus(entry.status)) {
-      throw Object.assign(new Error("Dispatch documents are available after dispatch."), { status: 403 });
-    }
+    // Sales can open every document of its company's entries at any stage (view only).
     return entry;
   }
 
