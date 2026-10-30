@@ -80,34 +80,51 @@ export async function uploadFile(
     // Only this path is saved - there is no temporary copy.
     // ==========================================
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const { warehouseId, outwardId, kind } = req.body || {};
+    const { warehouseId, companyId, outwardId, kind } = req.body || {};
     const isPi = kind === "pi";
+    // "Dispatch directly" has no warehouse: the file is checked against the company instead.
+    const direct = !warehouseId && Boolean(companyId);
 
-    if (!UUID_RE.test(String(warehouseId || "")) || !UUID_RE.test(String(outwardId || ""))) {
+    if (!UUID_RE.test(String(outwardId || "")) || !UUID_RE.test(String(direct ? companyId : warehouseId || ""))) {
       return res.status(422).json({
-        message: "Select a warehouse before attaching a file.",
+        message: direct ? "Select a company before attaching a file." : "Select a warehouse before attaching a file.",
       });
     }
 
-    const [warehouse, existingEntry, companyIds] = await Promise.all([
-      prisma.warehouse.findUnique({
-        where: { id: warehouseId },
-        select: { id: true, code: true, companyId: true },
-      }),
-      prisma.min.findUnique({ where: { id: outwardId }, select: { warehouseId: true, outwardNumber: true } }),
-      req.user.role !== "SUPER_ADMIN" ? getUserCompanyIds(req.user) : Promise.resolve(null),
-    ]);
-    if (!warehouse) {
-      return res.status(404).json({ message: "Warehouse not found" });
-    }
+    let existingEntry;
+    if (direct) {
+      const [company, entry, companyIds] = await Promise.all([
+        prisma.company.findUnique({ where: { id: companyId }, select: { id: true } }),
+        prisma.min.findUnique({ where: { id: outwardId }, select: { warehouseId: true, directDispatch: true, companyId: true, outwardNumber: true } }),
+        req.user.role !== "SUPER_ADMIN" ? getUserCompanyIds(req.user) : Promise.resolve(null),
+      ]);
+      if (!company) return res.status(404).json({ message: "Company not found" });
+      if (companyIds && !companyIds.includes(company.id)) return res.status(403).json({ message: "You are not linked with the selected company" });
+      if (entry && !entry.directDispatch) return res.status(400).json({ message: "This outward entry belongs to a warehouse" });
+      if (entry && entry.companyId !== company.id && req.user.role !== "SUPER_ADMIN") return res.status(400).json({ message: "This outward entry belongs to a different company" });
+      existingEntry = entry;
+    } else {
+      const [warehouse, entry, companyIds] = await Promise.all([
+        prisma.warehouse.findUnique({
+          where: { id: warehouseId },
+          select: { id: true, code: true, companyId: true },
+        }),
+        prisma.min.findUnique({ where: { id: outwardId }, select: { warehouseId: true, outwardNumber: true } }),
+        req.user.role !== "SUPER_ADMIN" ? getUserCompanyIds(req.user) : Promise.resolve(null),
+      ]);
+      if (!warehouse) {
+        return res.status(404).json({ message: "Warehouse not found" });
+      }
 
-    if (companyIds && !sharesCompany(await getWarehouseCompanies(warehouse.id), companyIds)) {
-      return res.status(403).json({ message: "You don't have access to this warehouse" });
-    }
+      if (companyIds && !sharesCompany(await getWarehouseCompanies(warehouse.id), companyIds)) {
+        return res.status(403).json({ message: "You don't have access to this warehouse" });
+      }
 
-    // An existing entry must belong to the same warehouse as the folder it is uploaded to.
-    if (existingEntry && existingEntry.warehouseId !== warehouse.id) {
-      return res.status(400).json({ message: "This outward entry belongs to a different warehouse" });
+      // An existing entry must belong to the same warehouse as the folder it is uploaded to.
+      if (entry && entry.warehouseId !== warehouse.id) {
+        return res.status(400).json({ message: "This outward entry belongs to a different warehouse" });
+      }
+      existingEntry = entry;
     }
 
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;

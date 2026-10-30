@@ -203,6 +203,8 @@ export default function OutwardDetail() {
   // Warehouse managers only get "Pending" / "Dispatched" (dispatchState);
   // everyone else gets the real workflow status.
   const workflow = outward.workflowStatus;
+  // "Dispatch directly": no warehouse, no transportation / dispatch / receiving forms.
+  const isDirect = Boolean(outward.directDispatch);
   const dispatched = isWarehouse ? outward.dispatchState === "Dispatched" : isDispatchedStatus(workflow);
   const awaitingDispatch = isWarehouse ? outward.dispatchState === "Pending" : isApprovedStatus(workflow);
   const showCost = !isWarehouse;
@@ -222,22 +224,23 @@ export default function OutwardDetail() {
   const stage = outward.stage;
   const transportSubmitted = isTransportSubmitted(outward);
   // Account's documents unlock only after approval AND the warehouse manager's transportation form.
-  const accountDocsEditable = isApprovedStatus(workflow) && transportSubmitted;
+  const accountDocsEditable = isApprovedStatus(workflow) && (transportSubmitted || isDirect);
   const accountDocsBlockedMessage =
     isDispatchedStatus(workflow)
       ? ""
-      : isApprovedStatus(workflow) && !transportSubmitted
+      : isApprovedStatus(workflow) && !transportSubmitted && !isDirect
       ? "Waiting for the warehouse manager to submit the vehicle / transportation details. Documents can be uploaded after that."
       : isApprovedStatus(workflow)
       ? ""
       : "Documents can be uploaded after the entry is approved and the warehouse has submitted the vehicle / transportation details.";
   // Warehouse manager / Super admin: the three forms (Transportation -> Dispatch -> Receiving).
-  const showFormButtons = isWarehouse || isSuperAdmin;
+  const showFormButtons = (isWarehouse || isSuperAdmin) && !isDirect;
   const dispatchOpen = stage === STAGE.READY_FOR_DISPATCH || stage === STAGE.DISPATCHED;
   // Documents: add / upload / replace / delete for the warehouse manager (before and after dispatch)
   // and for the Super admin. Sales / Account never see the section for editing.
   // Documents are saved only after dispatch - before that the dispatch page keeps the picked files.
-  const canManageDocs = (isSuperAdmin || isWarehouse) && dispatched;
+  // A "Dispatch directly" entry has no warehouse: the manager can only view it.
+  const canManageDocs = (isSuperAdmin || (isWarehouse && !isDirect)) && dispatched;
   // The super admin does not see the documents section at the approval stage;
   // it appears with the dispatch details and stays after dispatch.
   const docsStage = !isSuperAdmin || awaitingDispatch || dispatched;
@@ -247,7 +250,7 @@ export default function OutwardDetail() {
   // Hidden until the entry is dispatched (before that there are no dispatch documents to show).
   // Sales sees everything about the entry (view only): documents, transportation, dispatch and receiving details.
   const showDocuments = isSales || (dispatched && docsStage && (isSuperAdmin || isWarehouse) && (!isWarehouse || dispatchOpen));
-  const showDispatchInfo = (isWarehouse && dispatchOpen) || (isSuperAdmin && dispatched) || isSales;
+  const showDispatchInfo = !isDirect && ((isWarehouse && dispatchOpen) || (isSuperAdmin && dispatched) || isSales);
   const received = isReceived(outward);
   const statusStyle = getStatusStyle(outward);
 
@@ -259,7 +262,7 @@ export default function OutwardDetail() {
     document: doc,
     required: false,
   }));
-  const currentStatus = isReceived(outward) ? "Delivered" : "Shipped";
+  const currentStatus = isDirect ? "Delivered directly" : isReceived(outward) ? "Delivered" : "Shipped";
 
   // One row per reference document added on the form (invoice, e-way
   // bill, etc). Older records without a referenceDocuments array fall
@@ -347,6 +350,7 @@ export default function OutwardDetail() {
             <Info icon={<Hash size={18} />} label="Dispatch Number" value={outward.outwardNumber || "-"} />
             <Info icon={<User size={18} />} label="Customer" value={outward.customerName || "-"} />
             <Info icon={<User size={18} />} label="Company" value={outward.companyName || outward.warehouse?.company?.name || "-"} />
+            {isDirect && <Info icon={<Truck size={18} />} label="Warehouse" value="Dispatch directly (no warehouse)" />}
             <Info icon={<Truck size={18} />} label="Outward Type" value={outward.outwardType || "-"} />
             {(
               <>
@@ -445,6 +449,8 @@ export default function OutwardDetail() {
                   <Info label="Transporter ID" value={outward.transporterId || "-"} />
                   <Info icon={<User size={18} />} label="Transporter Name" value={outward.transporterName || "-"} />
                   <Info label="Transporter Contact" value={outward.transporterContact || "-"} />
+                  <Info label="Vehicle No." value={outward.vehicleNumber || "-"} />
+                  <Info label="Driver Contact" value={outward.driverContact || "-"} />
                 </>
               ) : (
                 <>
@@ -501,8 +507,8 @@ export default function OutwardDetail() {
                 <th className="py-2 px-1 w-6 sm:py-3 sm:px-3 sm:w-auto">#</th>
                 <th className="py-2 px-1 sm:py-3 sm:px-3">Category</th>
                 <th className="py-2 px-1 sm:py-3 sm:px-3">{isWarehouse ? "Model" : "SKU"}</th>
-                <th className="py-2 px-1 sm:py-3 sm:px-3">Qty</th>
-                <th className="py-2 px-1 sm:py-3 sm:px-3">UOM</th>
+                {!isDirect && <th className="py-2 px-1 sm:py-3 sm:px-3">Qty</th>}
+                {!isDirect && <th className="py-2 px-1 sm:py-3 sm:px-3">UOM</th>}
               </tr>
             </thead>
             <tbody>
@@ -514,8 +520,8 @@ export default function OutwardDetail() {
                       <td className="py-2 px-1 sm:py-4 sm:px-3">{index + 1}</td>
                       <td className="py-2 px-1 break-words sm:py-4 sm:px-3">{item.category || "-"}</td>
                       <td className="py-2 px-1 break-words font-medium sm:py-4 sm:px-3">{item.sku || "-"}</td>
-                      <td className="py-2 px-1 sm:py-4 sm:px-3">{item.quantity || 0}</td>
-                      <td className="py-2 px-1 break-words sm:py-4 sm:px-3">{item.uom || "-"}</td>
+                      {!isDirect && <td className="py-2 px-1 sm:py-4 sm:px-3">{item.quantity || 0}</td>}
+                      {!isDirect && <td className="py-2 px-1 break-words sm:py-4 sm:px-3">{item.uom || "-"}</td>}
                     </tr>
                     {rowSerials.length > 0 && (
                       <tr className="border-b last:border-0">
@@ -586,7 +592,7 @@ export default function OutwardDetail() {
             editable={ACCOUNT_EDIT_STATUSES.includes(workflow) && accountDocsEditable}
             docsBlockedMessage={accountDocsBlockedMessage}
             // Reference documents appear only once the transportation details are in (or after dispatch).
-            showReferences={transportSubmitted || isDispatchedStatus(workflow)}
+            showReferences={transportSubmitted || isDirect || isDispatchedStatus(workflow)}
             canApprove={canApprove}
             canReject={canReject}
             canHold={canHold}
@@ -617,7 +623,9 @@ export default function OutwardDetail() {
               {decision === "approve" ? "Approve this outward entry?" : decision === "hold" ? "Put this outward entry on hold?" : "Reject this outward entry?"}
             </h3>
             <p className="mt-1 text-sm text-gray-500">
-              {decision === "approve"
+              {decision === "approve" && isDirect
+                ? "The payment details will be marked approved. There is no warehouse step: after approval you upload the documents and the entry is delivered directly."
+                : decision === "approve"
                 ? "The payment details will be marked approved and the entry goes to the warehouse manager for dispatch."
                 : decision === "hold"
                 ? "It stays with Account and is not sent to the warehouse. You can approve or reject it later."

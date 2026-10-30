@@ -100,7 +100,9 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
   const readOnlyRefs = (Array.isArray(outward?.referenceDocuments) ? outward.referenceDocuments : []).filter(isAccountRef);
 
   // The Documents section shows one (optional) row for each reference type that is chosen.
-  const aboveLimit = isAboveEwayLimit(outward?.piAmount);
+  // "Dispatch directly": no warehouse - uploading the documents completes (delivers) the entry.
+  const isDirect = Boolean(outward?.directDispatch);
+  const aboveLimit = !isDirect && isAboveEwayLimit(outward?.piAmount);
   const documentSlots = useMemo(() => {
     const slots = [];
     for (const r of references) {
@@ -116,7 +118,7 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
   // Shared once Account has any document (file) or any saved reference (Invoice / E-way Bill / DC Challan / ...).
   // Released to the warehouse manager once Account has pressed Submit after the transportation form (documents are optional).
   const sharedWithWarehouse = outward?.stage === "READY_FOR_DISPATCH" || outward?.stage === "DISPATCHED";
-  const awaitingSubmit = editable && !docsBlockedMessage && !sharedWithWarehouse && Boolean(outward?.transportSubmittedAt || outward?.stage === "DOCS_PENDING");
+  const awaitingSubmit = editable && !docsBlockedMessage && !sharedWithWarehouse && Boolean(isDirect || outward?.transportSubmittedAt || outward?.stage === "DOCS_PENDING");
 
   const handleSave = async () => {
     if (saving) return false;
@@ -260,7 +262,9 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
             sharedWithWarehouse ? "border-green-200 bg-green-50 text-green-700" : "border-blue-200 bg-blue-50 text-blue-800"
           }`}
         >
-          {sharedWithWarehouse
+          {isDirect
+            ? "Dispatch directly - there is no warehouse step. Documents and reference numbers are optional. Press Submit (with or without them) and the entry is marked Delivered directly."
+            : sharedWithWarehouse
             ? "Shared with the warehouse manager - their dispatch form is open. Every document you upload (the Invoice too) is visible to them."
             : "Vehicle details received. Press Submit to open the warehouse manager's dispatch form. Documents (invoice, e-way bill, DC challan, invoice without amount or other) are optional."}
         </div>
@@ -319,14 +323,22 @@ export default function AccountOutwardPanel({ outwardId, outward, editable, docs
         otherPrefix={ACCOUNT_DOC_PREFIX}
         showSummary={false}
         title="Documents"
-        subtitle="One row for each reference document above. Every document you upload, the Invoice included, is shared with the warehouse manager. All documents are optional."
+        subtitle={isDirect ? "One row for each reference document above. All documents are optional - press Submit to complete this entry." : "One row for each reference document above. Every document you upload, the Invoice included, is shared with the warehouse manager. All documents are optional."}
       />
 
       <div className="flex flex-wrap items-center justify-end gap-3">
         {awaitingSubmit && (
           <button
             type="button"
-            onClick={async () => { if (await handleSave()) toast.success("Submitted. The warehouse manager's dispatch form is now open."); }}
+            onClick={async () => {
+              if (isDirect) {
+                // Documents and reference numbers are optional: Account can submit with nothing attached.
+                if (await handleSave()) toast.success("Submitted. This entry is now delivered directly.");
+                return undefined;
+              }
+              if (await handleSave()) toast.success("Submitted. The warehouse manager's dispatch form is now open.");
+              return undefined;
+            }}
             disabled={saving}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >

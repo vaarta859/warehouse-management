@@ -18,10 +18,10 @@ enum OutwardStatus {
   PENDING_APPROVAL   // created by Sales, waiting for the Account team
   PENDING_DISPATCH   // LEGACY: old "approved" value. Rows are moved to TRANSPORT_PENDING / DOCS_PENDING / READY_FOR_DISPATCH by the backfill migration; no new rows use it
   TRANSPORT_PENDING  // approved by Account, waiting for the Warehouse manager's transportation details
-  DOCS_PENDING       // transportation sent, waiting for the Account team's documents (DC Challan / Without Invoice releases it)
+  DOCS_PENDING       // transportation sent, waiting for the Account team's documents (also used by "Dispatch directly" after approval)
   READY_FOR_DISPATCH // transportation + Account documents done, Warehouse manager can fill the dispatch form. Locked for Sales / Account edits.
   DISPATCHED         // Warehouse manager filled dispatch details ("Delivered pending" in the UI)
-  DELIVERED          // receiving form filled
+  DELIVERED          // receiving form filled (or "Dispatch directly": Account pressed Submit)
   REJECTED           // Account rejected it; Sales can edit + resubmit
   ON_HOLD            // Account put it on hold (reason given); Account can approve / reject later, Sales can edit + resubmit
 }
@@ -71,6 +71,9 @@ model Company {
 
   // Every warehouse linked with this company (a warehouse can have many companies).
   warehouseLinks WarehouseCompanyLink[]
+
+  // "Dispatch directly" outward entries of this company (they have no warehouse).
+  directMins Min[]
 }
 
 // Customer names added with "+ Add" on the outward form. One list per company, shown to every user of the company.
@@ -315,8 +318,15 @@ model Min {
   receivedByName   String?
   receivedAt       DateTime?   // when the receiving form was first saved (null = receiving still pending)
 
-  warehouseId String
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  // "Dispatch directly": no warehouse. The entry belongs to a company instead, Account's documents
+  // complete it (status DELIVERED) and the warehouse manager has no step in it.
+  directDispatch Boolean  @default(false)
+  companyId      String?
+  company        Company? @relation(fields: [companyId], references: [id])
+
+  // Null only for "Dispatch directly" entries.
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
 
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id])
@@ -340,6 +350,8 @@ model Min {
   @@index([status])
   @@index([warehouseId])
   @@index([createdById])
+  // direct entries of a company
+  @@index([companyId, directDispatch, status])
   // list page + KPI counts: newest first / by status inside a warehouse
   @@index([warehouseId, createdAt])
   @@index([warehouseId, status, createdAt])
@@ -455,8 +467,9 @@ model AuditLog {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  warehouseId String
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  // Null for "Dispatch directly" outward entries (no warehouse).
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
 
   createdAt DateTime @default(now())
 

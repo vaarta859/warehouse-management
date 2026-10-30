@@ -62,6 +62,10 @@ import LocationLink from "../components/LocationLink";
 
 const makeId = () => crypto.randomUUID();
 
+// Value of the "Dispatch directly" choice in the Warehouse dropdown. Nothing is taken from warehouse stock, no warehouse
+// role is involved: after Account approves, Account uploads the documents and the entry is delivered directly.
+const DIRECT_VALUE = "__DIRECT__";
+
 // AC / DC cables are sold by length: picking one of those categories shows Meters in the UOM dropdown
 // (it can still be changed afterwards, and goes back to Pcs when another category is picked).
 const isCableCategory = (category) => {
@@ -143,6 +147,7 @@ export default function OutwardForm() {
   const [savedCompanyName, setSavedCompanyName] = useState("");
   const [companyTouched, setCompanyTouched] = useState(false);
   const [pickedWarehouseId, setPickedWarehouseId] = useState("");
+  const [dispatchDirectly, setDispatchDirectly] = useState(false); // "Dispatch directly" picked instead of a warehouse
   const [entryWarehouse, setEntryWarehouse] = useState(null); // edit mode: the entry's own warehouse
   const [items, setItems] = useState([newItem()]);
   const itemsRef = useRef(items);
@@ -171,7 +176,7 @@ export default function OutwardForm() {
   const currentOutward = useSelector(selectCurrentOutward);
   // Super admin can change the company of an entry to any active company until it is dispatched.
   const canChangeCompany = isEdit && isSuperAdmin && !["DISPATCHED", "DELIVERED"].includes(entryStatus);
-  const showDispatchSection = isEdit && isSuperAdmin && ["DISPATCHED", "DELIVERED"].includes(entryStatus);
+  const showDispatchSection = isEdit && isSuperAdmin && ["DISPATCHED", "DELIVERED"].includes(entryStatus) && !dispatchDirectly;
   const [dispatchMode, setDispatchMode] = useState("By Road");
   const [vehicleNumber, setVehicleNumber] = useState("");
   const [driverName, setDriverName] = useState("");
@@ -245,9 +250,9 @@ export default function OutwardForm() {
   }, [isEdit, selectedCompanyId, companyOptions]);
 
   useEffect(() => {
-    if (isEdit || pickedWarehouseId || companyWarehouses.length !== 1) return;
+    if (isEdit || pickedWarehouseId || dispatchDirectly || companyWarehouses.length !== 1) return;
     setPickedWarehouseId(companyWarehouses[0].id);
-  }, [isEdit, pickedWarehouseId, companyWarehouses]);
+  }, [isEdit, pickedWarehouseId, dispatchDirectly, companyWarehouses]);
 
   const selectedWarehouse = isEdit
     ? entryWarehouse
@@ -256,21 +261,24 @@ export default function OutwardForm() {
 
   // Every customer added for this company (by anyone) shows in the Customer Name dropdown.
   const [sharedCustomers, setSharedCustomers] = useState([]);
+  // Dispatch directly has no warehouse: the customers of the chosen company are listed instead.
+  const customerScope = warehouseId ? { warehouseId } : dispatchDirectly && selectedCompanyId ? { companyId: selectedCompanyId } : null;
+  const customerScopeKey = customerScope ? JSON.stringify(customerScope) : "";
   useEffect(() => {
-    if (!warehouseId) { setSharedCustomers([]); return undefined; }
+    if (!customerScopeKey) { setSharedCustomers([]); return undefined; }
     let cancelled = false;
     apiClient
-      .get("/api/outward/customers", { params: { warehouseId } })
+      .get("/api/outward/customers", { params: JSON.parse(customerScopeKey) })
       .then(({ data }) => { if (!cancelled) setSharedCustomers((data?.data || []).map((c) => c.name).filter(Boolean)); })
       .catch(() => { if (!cancelled) setSharedCustomers([]); });
     return () => { cancelled = true; };
-  }, [warehouseId]);
+  }, [customerScopeKey]);
 
   // "+ Add" saves the customer on the server for the whole company, so it is in the dropdown for every user, every time.
   const saveCustomer = (name) => {
     setSharedCustomers((prev) => (prev.some((c) => c.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]));
-    if (!warehouseId) return;
-    apiClient.post("/api/outward/customers", { warehouseId, name }).catch((err) => {
+    if (!customerScope) return;
+    apiClient.post("/api/outward/customers", { ...customerScope, name }).catch((err) => {
       toast.error(err.response?.data?.message || "Customer could not be saved for other users.");
     });
   };
@@ -285,7 +293,7 @@ export default function OutwardForm() {
     setPayment((p) => (p.proof ? { ...p, proof: null } : p));
     if (piFileRef.current?.fileKey) dispatch(deleteUploadedProof({ fileKey: piFileRef.current.fileKey }));
     setPiFile(null);
-  }, [warehouseId, isEdit, dispatch]);
+  }, [warehouseId, dispatchDirectly, isEdit, dispatch]);
   const pickedCompanyName =
     companyOptions.find((c) => c.id === selectedCompanyId)?.name ||
     warehouseCompaniesOf(selectedWarehouse).find((c) => c.id === selectedCompanyId)?.name ||
@@ -326,6 +334,11 @@ export default function OutwardForm() {
         setSavedCompanyName(x.companyName || "");
         setSelectedCompanyId(saved?.id || x.warehouse.companyId || x.warehouse.company?.id || linked[0]?.id || "");
         setPickedWarehouseId(x.warehouse.id);
+      } else if (x.directDispatch) {
+        // Dispatch directly: no warehouse, the entry belongs to the company.
+        setDispatchDirectly(true);
+        setSavedCompanyName(x.companyName || "");
+        setSelectedCompanyId(x.companyId || "");
       }
       setOutwardDateTime(getDateTimeLocal(x.refDocDate || x.createdAt));
       setOutwardType(/^return/i.test(x.outwardType || "") ? "Replacement" : x.outwardType || "Sale - Stock Out");
@@ -408,7 +421,7 @@ export default function OutwardForm() {
 
   // ---- Stock in the selected warehouse -------------------------------------
   // Editing: this entry's own quantities count as available again (server-side).
-  const { rows: stockRows, status: stockStatus, reload: reloadStock } = useOutwardStock(warehouseId, editId, companyName, outwardType);
+  const { rows: stockRows, status: stockStatus, reload: reloadStock } = useOutwardStock(dispatchDirectly ? "" : warehouseId, editId, companyName, outwardType);
   const stockByKey = useMemo(() => new Map(stockRows.map((r) => [stockKey(r.category, r.sku), r])), [stockRows]);
   const originalQtyByKey = useMemo(() => {
     const totals = new Map();
@@ -434,7 +447,9 @@ export default function OutwardForm() {
     return { available: Math.max(base - takenByOthers, 0), uom: row?.uom || "" };
   };
 
-  const stockBlockReason = !warehouseId
+  const stockBlockReason = dispatchDirectly
+    ? ""
+    : !warehouseId
     ? "Select warehouse first"
     : stockStatus === "failed"
       ? "Couldn't load stock"
@@ -444,7 +459,7 @@ export default function OutwardForm() {
 
   const permissions = getWarehousePermissions(user, selectedWarehouse || warehouseId);
   const operationBlocked =
-    !selectedWarehouse || (warehouseCompaniesOf(selectedWarehouse).length > 0 && warehouseCompaniesOf(selectedWarehouse).every((c) => c.status === "Inactive")) || selectedWarehouse.Outward !== "Active";
+    !dispatchDirectly && (!selectedWarehouse || (warehouseCompaniesOf(selectedWarehouse).length > 0 && warehouseCompaniesOf(selectedWarehouse).every((c) => c.status === "Inactive")) || selectedWarehouse.Outward !== "Active");
 
   // ---- Items ---------------------------------------------------------------
   const updateItem = (id, field, value) => setItems((p) => p.map((i) => {
@@ -474,11 +489,12 @@ export default function OutwardForm() {
     if (file.size > 10 * 1024 * 1024) return toast.error("File size must be less than 10 MB.");
     if (!PROOF_TYPES.includes(file.type)) return toast.error("Only PDF, JPG, PNG and WEBP files are allowed.");
 
-    if (!warehouseId) return toast.error("Please select a warehouse before attaching a payment proof.");
+    if (!warehouseId && !dispatchDirectly) return toast.error("Please select a warehouse (or Dispatch directly) before attaching a payment proof.");
+    if (dispatchDirectly && !selectedCompanyId) return toast.error("Please select a company before attaching a payment proof.");
 
     const previousKey = paymentRef.current.proof?.fileKey;
     setProofUploadingId("payment");
-    const result = await dispatch(uploadOutwardProof({ file, warehouseId, outwardId }));
+    const result = await dispatch(uploadOutwardProof({ file, warehouseId: warehouseId || undefined, companyId: dispatchDirectly ? selectedCompanyId : undefined, outwardId }));
     setProofUploadingId(null);
     if (uploadOutwardProof.fulfilled.match(result)) {
       setPayment((p) => ({ ...p, proof: result.payload, keepProof: false }));
@@ -500,11 +516,12 @@ export default function OutwardForm() {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) return toast.error("File size must be less than 10 MB.");
     if (!PROOF_TYPES.includes(file.type)) return toast.error("Only PDF, JPG, PNG and WEBP files are allowed.");
-    if (!warehouseId) return toast.error("Please select a warehouse before attaching the PI file.");
+    if (!warehouseId && !dispatchDirectly) return toast.error("Please select a warehouse (or Dispatch directly) before attaching the PI file.");
+    if (dispatchDirectly && !selectedCompanyId) return toast.error("Please select a company before attaching the PI file.");
 
     const previousKey = piFileRef.current?.fileKey;
     setPiUploading(true);
-    const result = await dispatch(uploadOutwardProof({ file, warehouseId, outwardId, kind: "pi" }));
+    const result = await dispatch(uploadOutwardProof({ file, warehouseId: warehouseId || undefined, companyId: dispatchDirectly ? selectedCompanyId : undefined, outwardId, kind: "pi" }));
     setPiUploading(false);
     if (uploadOutwardProof.fulfilled.match(result)) {
       setPiFile(result.payload);
@@ -529,8 +546,8 @@ export default function OutwardForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedCompanyId) return toast.error("Please select a company.");
-    if (!warehouseId) return toast.error("Please select a warehouse.");
-    if (operationBlocked || !permissions.canOutward) return toast.error("Outward is not available for this warehouse.");
+    if (!warehouseId && !dispatchDirectly) return toast.error("Please select a warehouse or Dispatch directly.");
+    if (!dispatchDirectly && (operationBlocked || !permissions.canOutward)) return toast.error("Outward is not available for this warehouse.");
     if (!customerName.trim()) return toast.error("Please enter customer name.");
     if (!companyName.trim()) return toast.error("Company name is missing.");
     if (piAmount !== "" && (!Number.isFinite(Number(piAmount)) || Number(piAmount) < 0)) return toast.error("Please enter a valid PI amount.");
@@ -564,8 +581,8 @@ export default function OutwardForm() {
     }
 
     // Can't dispatch more than is in stock. (The server checks again when saving.)
-    if (stockStatus !== "succeeded") return toast.error("Available stock hasn't loaded yet. Please wait a moment (or reload the page) and try again.");
-    for (const item of items) {
+    if (!dispatchDirectly && stockStatus !== "succeeded") return toast.error("Available stock hasn't loaded yet. Please wait a moment (or reload the page) and try again.");
+    for (const item of dispatchDirectly ? [] : items) {
       const { available, uom } = availableFor(item.id, item.category, item.sku);
       if (Number(item.quantity) > available) {
         return toast.error(
@@ -578,7 +595,8 @@ export default function OutwardForm() {
 
     const payload = {
       ...(isEdit ? {} : { id: outwardId }),
-      warehouseId,
+      warehouseId: dispatchDirectly ? undefined : warehouseId,
+      directDispatch: dispatchDirectly || undefined,
       companyId: selectedCompanyId,
       outwardType,
       outwardDateTime,
@@ -677,7 +695,9 @@ export default function OutwardForm() {
             <p className="text-xs text-gray-400">
               {isEdit
                 ? "Update the details and send them for approval again"
-                : "Fill the customer and item details. It goes to the Account team for approval."}
+                : dispatchDirectly
+                  ? "Dispatch directly: no warehouse is involved. It goes to the Account team for approval and is delivered once Account uploads the documents."
+                  : "Fill the customer and item details. It goes to the Account team for approval."}
             </p>
           </div>
         </div>
@@ -725,7 +745,7 @@ export default function OutwardForm() {
                 ) : (
                   <div><label className={labelCls}>Company</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{companyName || "-"}</div></div>
                 )}
-                <div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "-"}</div></div>
+                <div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || (dispatchDirectly ? "Dispatch directly" : "-")}</div></div>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -734,7 +754,7 @@ export default function OutwardForm() {
                   <div className="relative">
                     <select
                       value={selectedCompanyId}
-                      onChange={(e) => { setSelectedCompanyId(e.target.value); setPickedWarehouseId(""); }}
+                      onChange={(e) => { setSelectedCompanyId(e.target.value); setPickedWarehouseId(""); setDispatchDirectly(false); }}
                       className={`${inputCls} appearance-none bg-white`}
                     >
                       <option value="">Select company</option>
@@ -747,18 +767,28 @@ export default function OutwardForm() {
                   <label className={labelCls}>Warehouse</label>
                   <div className="relative">
                     <select
-                      value={pickedWarehouseId}
+                      value={dispatchDirectly ? DIRECT_VALUE : pickedWarehouseId}
                       disabled={!selectedCompanyId}
-                      onChange={(e) => setPickedWarehouseId(e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDispatchDirectly(value === DIRECT_VALUE);
+                        setPickedWarehouseId(value === DIRECT_VALUE ? "" : value);
+                      }}
                       className={`${inputCls} appearance-none bg-white disabled:bg-gray-100 disabled:text-gray-400`}
                     >
                       <option value="">{selectedCompanyId ? "Select warehouse" : "Select company first"}</option>
                       {companyWarehouses.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.code})</option>)}
+                      {selectedCompanyId && <option value={DIRECT_VALUE}>Dispatch directly</option>}
                     </select>
                     <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   </div>
                 </div>
               </div>
+            )}
+            {dispatchDirectly && (
+              <p className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                Dispatch directly: no warehouse is involved. Select the category, model, quantity and UOM of each item (no stock check) and fill the payment details. After the Account team approves it, Account uploads the documents and the status becomes Delivered directly.
+              </p>
             )}
             {selectedWarehouse && operationBlocked && (
               <p className="mt-3 text-xs text-red-600">Outward is disabled for this warehouse or its company.</p>
@@ -844,7 +874,9 @@ export default function OutwardForm() {
               <button type="button" onClick={addItem} className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-semibold text-blue-700"><Plus size={14} />Add item</button>
             </div>
             <ItemProductNotice isAdmin={isSuperAdmin} />
-            {warehouseId && stockStatus === "failed" ? (
+            {dispatchDirectly ? (
+              <p className="mb-3 text-xs text-gray-500">Select the category and model and enter the quantity and UOM. Nothing is taken from warehouse stock, so there is no stock limit.</p>
+            ) : warehouseId && stockStatus === "failed" ? (
               <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                 <span>Couldn't load the available stock for this warehouse.</span>
                 <button type="button" onClick={reloadStock} className="font-semibold underline">Retry</button>
@@ -855,7 +887,7 @@ export default function OutwardForm() {
 
             <div className="space-y-4">
               {items.map((item, index) => {
-                const stockInfo = item.sku ? availableFor(item.id, item.category, item.sku) : null;
+                const stockInfo = item.sku && !dispatchDirectly ? availableFor(item.id, item.category, item.sku) : null;
                 const overLimit = stockInfo && Number(item.quantity) > stockInfo.available;
 
                 return (
@@ -866,7 +898,8 @@ export default function OutwardForm() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-12">
-                      <ItemProductFields item={item} products={products} onChange={(field, value) => updateItem(item.id, field, value)} inputCls={inputCls} labelCls={labelCls} categoryClass="md:col-span-3" skuClass="md:col-span-5" getStock={(category, sku) => availableFor(item.id, category, sku)} stockBlockReason={stockBlockReason} />
+                      <ItemProductFields item={item} products={products} onChange={(field, value) => updateItem(item.id, field, value)} inputCls={inputCls} labelCls={labelCls} categoryClass="md:col-span-3" skuClass="md:col-span-5" getStock={dispatchDirectly ? undefined : (category, sku) => availableFor(item.id, category, sku)} stockBlockReason={stockBlockReason} />
+                      <>
                       <div className="md:col-span-2">
                         <label className={labelCls}>Quantity</label>
                         <input
@@ -895,6 +928,7 @@ export default function OutwardForm() {
                           <option>Pcs</option><option>Meters</option><option>Bundles</option>
                         </select>
                       </div>
+                      </>
                     </div>
 
                   </div>

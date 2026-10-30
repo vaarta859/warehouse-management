@@ -62,6 +62,15 @@ export const DISPATCHED_STATUSES = [STATUS.DISPATCHED, STATUS.DELIVERED];
 export const isDispatchedStatus = (status) => DISPATCHED_STATUSES.includes(status);
 export const isApprovedStatus = (status) => APPROVED_STATUSES.includes(status);
 
+// DISPATCH DIRECTLY (no warehouse): Sales picks "Dispatch directly" instead of a warehouse on the outward form.
+//   SALES   --create-->  PENDING_APPROVAL   (category + model + quantity + UOM + payment; no stock check)
+//   ACCOUNT --approve--> DOCS_PENDING       (no warehouse manager, no transportation / dispatch / receiving forms)
+//   ACCOUNT --presses Submit--> DELIVERED   (documents / reference numbers are OPTIONAL - Submit works with nothing attached;
+//                                            shown as "Delivered directly", flag Min.directDispatch = true)
+//   WAREHOUSE_MANAGER can VIEW the delivered direct entries of the companies of his warehouses (read only, no forms).
+// The entry belongs to a company (Min.companyId) instead of a warehouse (Min.warehouseId = null).
+// (direct entries are numbered MIN-<company code>-0001; no fixed code any more)
+
 export const PAYMENT_STATUSES = ["COMPLETED", "PARTIALLY_COMPLETED", "PENDING"];
 
 // Statuses the warehouse manager is allowed to see at all.
@@ -91,6 +100,23 @@ export async function getUserCompanyIds(user) {
     select: { companyId: true },
   });
   return [...new Set([...links.map((l) => l.companyId), ...(user.companyId ? [user.companyId] : [])])];
+}
+
+/**
+ * Company ids behind the warehouses a warehouse manager manages (primary company + linked companies).
+ * The manager may VIEW the "Dispatch directly" entries (delivered, view only) of these companies.
+ */
+export async function getManagerCompanyIds(user) {
+  const rows = await prisma.warehouseAccess.findMany({
+    where: { userId: user.id, accessLevel: "MANAGE" },
+    select: { warehouse: { select: { companyId: true, companyLinks: { select: { companyId: true } } } } },
+  });
+  const ids = new Set();
+  for (const r of rows) {
+    if (r.warehouse?.companyId) ids.add(r.warehouse.companyId);
+    for (const l of r.warehouse?.companyLinks || []) ids.add(l.companyId);
+  }
+  return [...ids];
 }
 
 /**
@@ -401,6 +427,8 @@ export function validateTransport(data) {
     // Only the transporter name is mandatory; ID and contact are optional (a contact, when given, must be 10 digits).
     if (!has("transporterName")) return "Transporter name is required";
     if (has("transporterContact") && !PHONE_RE.test(String(data.transporterContact).trim())) return "Transporter contact must be exactly 10 digits";
+    // Vehicle no. and driver contact are optional for a transporter (a driver contact, when given, must be 10 digits).
+    if (has("driverContact") && !PHONE_RE.test(String(data.driverContact).trim())) return "Driver contact must be exactly 10 digits";
   }
   return null;
 }
@@ -413,9 +441,10 @@ export function toTransportColumns(data) {
   return {
     transportMode: mode,
     dispatchMode: DISPATCH_MODES.includes(String(data.dispatchMode || "").trim()) ? String(data.dispatchMode).trim() : null,
-    vehicleNumber: dedicated ? t(data.vehicleNumber) : null,
+    vehicleNumber: t(data.vehicleNumber), // optional for a transporter
+
     driverName: dedicated ? t(data.driverName) : null,
-    driverContact: dedicated ? t(data.driverContact) : null,
+    driverContact: t(data.driverContact), // optional for a transporter
     transporterId: dedicated ? null : t(data.transporterId),
     transporterName: dedicated ? null : t(data.transporterName),
     transporterContact: dedicated ? null : t(data.transporterContact),
@@ -439,6 +468,8 @@ export const hasReleaseDocument = (docs = [], refs = []) =>
  * no transportation form -> TRANSPORT_PENDING; form in, no release document -> DOCS_PENDING; both -> READY_FOR_DISPATCH.
  */
 export function deriveApprovedStatus(entry, docs = [], refs = []) {
+  // Dispatch directly: no warehouse, so no transportation step - Account uploads the documents right after approval.
+  if (entry.directDispatch) return STATUS.DOCS_PENDING;
   if (!entry.transportSubmittedAt) return STATUS.TRANSPORT_PENDING;
   // Account's documents are optional, but the dispatch form opens only once Account has pressed Submit / Save after the
   // transportation form (saveAccountDocuments sets READY_FOR_DISPATCH). Once ready, it stays ready.
@@ -460,7 +491,7 @@ export function outwardStage(entry, docs = [], refs = []) {
  * Returns the status the entry has afterwards (null when it is not in an approved, undispatched status).
  */
 export async function syncApprovedStage(client, minId) {
-  const min = await client.min.findUnique({ where: { id: minId }, select: { status: true, transportSubmittedAt: true, piAmount: true } });
+  const min = await client.min.findUnique({ where: { id: minId }, select: { status: true, transportSubmittedAt: true, piAmount: true, directDispatch: true } });
   if (!min || !isApprovedStatus(min.status)) return null;
   const docs = await client.document.findMany({ where: { linkedType: "outward", linkedId: minId }, select: { docCategory: true } });
   const refs = await client.minReferenceDocument.findMany({ where: { minId }, select: { refDocType: true } });
@@ -519,6 +550,8 @@ export const hasInvoice = (docs = [], refs = []) =>
 export function accountDocsBlock(entry) {
   if (isDispatchedStatus(entry.status)) return "Documents can no longer be changed after dispatch";
   if (!isApprovedStatus(entry.status)) return "Documents can be added only after the entry is approved";
+  // Dispatch directly has no warehouse / transportation step.
+  if (entry.directDispatch) return null;
   if (!entry.transportSubmittedAt) return "Documents can be added only after the warehouse has submitted the vehicle / transportation details";
   return null;
 }

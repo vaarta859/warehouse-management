@@ -2,7 +2,7 @@ import prisma from "../config/prisma.js";
 import { getWarehouseCompanies, allCompaniesInactive, sharesCompany } from "../utils/warehouseCompanies.js";
 import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
 import { recordAuditLog } from "../utils/auditLog.js";
-import { isFinanceSide, getUserCompanyIds, WAREHOUSE_VISIBLE_STATUSES, STATUS, outwardFolder, isAccountDocCategory, isInvoiceDocCategory, hasReleaseDocument, ACCOUNT_DOC_STATUSES, isApprovedStatus, isDispatchedStatus, syncApprovedStage } from "../utils/outwardWorkflow.js";
+import { isFinanceSide, getUserCompanyIds, getManagerCompanyIds, WAREHOUSE_VISIBLE_STATUSES, STATUS, outwardFolder, isAccountDocCategory, isInvoiceDocCategory, hasReleaseDocument, ACCOUNT_DOC_STATUSES, isApprovedStatus, isDispatchedStatus, syncApprovedStage } from "../utils/outwardWorkflow.js";
  
 // assertLinkedEntryAccess used to be 3 sequential round-trips (entry, then
 // its warehouse, then the caller's warehouse access) plus a 4th one later
@@ -21,12 +21,42 @@ async function assertLinkedEntryAccess(req, linkedType, linkedId, permission = n
     select: {
       id: true,
       warehouseId: true,
-      ...(linkedType === "grn" ? {} : { status: true, createdById: true }),
+      ...(linkedType === "grn" ? {} : { status: true, createdById: true, directDispatch: true, companyId: true }),
       [numberField]: true,
       warehouse: { select: { id: true, code: true, companyId: true, company: { select: { status: true } } } },
     },
   });
   if (!entry) throw Object.assign(new Error(`${linkedType === "grn" ? "GRN" : "Outward entry"} not found.`), { status: 404 });
+
+  // Dispatch directly (outward without a warehouse): access comes from the company. Account manages the documents,
+  // Sales can only view them, the warehouse manager has no part in it.
+  if (linkedType === "outward" && entry.directDispatch) {
+    entry.entryNumber = entry.outwardNumber || entry.id;
+    const role = req.user.role;
+    if (role === "SUPER_ADMIN") {
+      if (!(isApprovedStatus(entry.status) || isDispatchedStatus(entry.status))) {
+        throw Object.assign(new Error("Documents are available after approval."), { status: 409 });
+      }
+      return entry;
+    }
+    // The warehouse manager can only OPEN (view / download) the documents of a delivered direct entry of his companies.
+    if (role === "WAREHOUSE_MANAGER") {
+      const managerCompanyIds = await getManagerCompanyIds(req.user);
+      if (permission || entry.status !== STATUS.DELIVERED || !entry.companyId || !managerCompanyIds.includes(entry.companyId)) {
+        throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
+      }
+      return entry;
+    }
+    if (!isFinanceSide(role)) throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
+    const companyIds = await getUserCompanyIds(req.user);
+    if (!entry.companyId || !companyIds.includes(entry.companyId)) throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
+    if (permission) {
+      if (role !== "ACCOUNT") throw Object.assign(new Error("You don't have access to this document."), { status: 403 });
+      if (!ACCOUNT_DOC_STATUSES.includes(entry.status)) throw Object.assign(new Error("Documents can no longer be changed after the entry is delivered."), { status: 409 });
+      if (!isAccountDocCategory(category)) throw Object.assign(new Error("Account can only manage invoice, e-way bill and other account documents."), { status: 403 });
+    }
+    return entry;
+  }
 
   const warehouse = entry.warehouse;
   if (!warehouse) throw Object.assign(new Error("Warehouse not found."), { status: 404 });

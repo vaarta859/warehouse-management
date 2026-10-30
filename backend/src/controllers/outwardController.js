@@ -60,6 +60,7 @@ import {
   isInvoiceDocCategory,
   transportLockReason,
   TRANSPORT_LOCK_MESSAGE,
+  getManagerCompanyIds,
 } from "../utils/outwardWorkflow.js";
 
 const DEFAULT_DOCUMENT_TYPES = ["Delivery challan", "Dispatch photo"];
@@ -98,6 +99,57 @@ async function getScopedWarehouseIds(req) {
   return [];
 }
 
+// Which entries a user may see: the entries of their warehouses plus, for Sales / Account, the
+// "Dispatch directly" entries (no warehouse) of their companies. The warehouse manager sees only the DELIVERED direct entries (view only).
+async function entryScopeWhere(req) {
+  const role = req.user.role;
+  if (role === "SUPER_ADMIN") return {};
+  const warehouseIds = (await getScopedWarehouseIds(req)) || [];
+  if (role === "WAREHOUSE_MANAGER") {
+    // The manager also SEES (view only) the delivered "Dispatch directly" entries of the companies of his warehouses.
+    const managerCompanyIds = await getManagerCompanyIds(req.user);
+    const managerClauses = [{ warehouseId: { in: warehouseIds } }];
+    if (managerCompanyIds.length) managerClauses.push({ directDispatch: true, status: STATUS.DELIVERED, companyId: { in: managerCompanyIds } });
+    return { OR: managerClauses };
+  }
+  const clauses = [{ warehouseId: { in: warehouseIds } }];
+  if (isFinanceSide(role)) {
+    const companyIds = await getUserCompanyIds(req.user);
+    if (companyIds.length) clauses.push({ directDispatch: true, companyId: { in: companyIds } });
+  }
+  return { OR: clauses };
+}
+
+// "Dispatch directly" has no warehouse: the company itself is checked (active, and the user belongs to it).
+async function assertDirectCompany(req, companyId) {
+  if (!companyId) throw httpError(422, "companyId is required");
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { id: true, name: true, code: true, status: true } });
+  if (!company) throw httpError(404, "Company not found");
+  if (company.status === "Inactive") throw httpError(403, "The selected company is inactive.");
+  if (req.user.role !== "SUPER_ADMIN") {
+    if (req.user.role !== "SALES") throw httpError(403, "Only Sales can create or edit outward entries");
+    const userCompanyIds = await getUserCompanyIds(req.user);
+    if (!userCompanyIds.includes(companyId)) throw httpError(403, "You are not linked with the selected company");
+  }
+  return company;
+}
+
+// Warehouse filter of the list / summary. A warehouse manager who picked a warehouse also gets the delivered
+// "Dispatch directly" entries of that warehouse's companies (they have no warehouse of their own).
+async function warehouseFilter(req, warehouseId) {
+  if (warehouseId === "DIRECT") return { directDispatch: true };
+  if (!warehouseId) return {};
+  if (req.user.role !== "WAREHOUSE_MANAGER") return { warehouseId };
+  const companies = await getWarehouseCompanies(warehouseId);
+  const companyIds = companies.map((c) => c.id);
+  return {
+    OR: [
+      { warehouseId },
+      ...(companyIds.length ? [{ directDispatch: true, status: STATUS.DELIVERED, companyId: { in: companyIds } }] : []),
+    ],
+  };
+}
+
 // Extra list filter that depends on who is asking.
 function roleWhere(req) {
   switch (req.user.role) {
@@ -131,7 +183,7 @@ async function assertCompanyForWarehouse(req, warehouseId, companyId, anyCompany
 }
 
 async function assertWarehouseAccess(req, warehouseId, permission = "canOutward") {
-  if (!warehouseId) throw httpError(400, "warehouseId is required");
+  if (!warehouseId) throw httpError(400, "warehouseId is required (a 'Dispatch directly' entry has no warehouse)");
 
   const warehouse = await prisma.warehouse.findUnique({
     where: { id: warehouseId },
@@ -168,6 +220,23 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
 async function assertEntryVisible(req, min) {
   const role = req.user.role;
   if (role === "SUPER_ADMIN") return;
+  // Dispatch directly: no warehouse, so access comes from the company. The warehouse manager can only view it once delivered.
+  if (min.directDispatch) {
+    if (role === "SALES" || role === "ACCOUNT") {
+      const companyIds = await getUserCompanyIds(req.user);
+      if (!min.companyId || !companyIds.includes(min.companyId)) throw httpError(403, "You don't have access to this entry");
+      return;
+    }
+    if (role === "WAREHOUSE_MANAGER") {
+      // View only, and only once the entry is delivered directly.
+      const managerCompanyIds = await getManagerCompanyIds(req.user);
+      if (min.status !== STATUS.DELIVERED || !min.companyId || !managerCompanyIds.includes(min.companyId)) {
+        throw httpError(403, "This entry is not available for the warehouse");
+      }
+      return;
+    }
+    throw httpError(403, "Not allowed");
+  }
   // Sales and Account: any entry of a warehouse that belongs to one of their companies (the whole team shares them).
   if (role === "SALES" || role === "ACCOUNT") {
     await assertWarehouseAccess(req, min.warehouseId, null);
@@ -237,11 +306,10 @@ const plainItem = (i) => ({ category: i.category, sku: i.sku, companyName: i.com
 export async function listOutward(req, res) {
   try {
     const { search = "", type, status, dateFrom, dateTo, warehouseId, page = "1", pageSize = "20" } = req.query;
-    const scopedWarehouseIds = await getScopedWarehouseIds(req);
     const where = {
       AND: [
-        scopedWarehouseIds ? { warehouseId: { in: scopedWarehouseIds } } : {},
-        warehouseId ? { warehouseId } : {},
+        await entryScopeWhere(req),
+        await warehouseFilter(req, warehouseId),
         roleWhere(req),
         status && Object.values(STATUS).includes(status) ? { status } : {},
         search ? { OR: [
@@ -301,11 +369,10 @@ export async function listOutward(req, res) {
 export async function getOutwardSummary(req, res) {
   try {
     const { warehouseId } = req.query;
-    const scopedWarehouseIds = await getScopedWarehouseIds(req);
     const where = {
       AND: [
-        scopedWarehouseIds ? { warehouseId: { in: scopedWarehouseIds } } : {},
-        warehouseId ? { warehouseId } : {},
+        await entryScopeWhere(req),
+        await warehouseFilter(req, warehouseId),
         roleWhere(req),
       ],
     };
@@ -494,11 +561,17 @@ const cleanCustomerName = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
 // outward entry of any warehouse of that company. Shared by all users of the company.
 export async function listOutwardCustomers(req, res) {
   try {
-    const { warehouseId } = req.query;
-    const warehouse = await assertWarehouseAccess(req, warehouseId, null);
-    const entryWhere = warehouse.companyId ? { warehouse: { companyId: warehouse.companyId } } : { warehouseId };
+    const { warehouseId, companyId } = req.query;
+    // "Dispatch directly" has no warehouse: the customers of the chosen company are listed instead.
+    const warehouse = warehouseId ? await assertWarehouseAccess(req, warehouseId, null) : null;
+    const directCompany = !warehouse && companyId ? await assertDirectCompany(req, companyId) : null;
+    if (!warehouse && !directCompany) return res.status(400).json({ message: "warehouseId or companyId is required" });
+    const customerCompanyId = warehouse ? warehouse.companyId : directCompany.id;
+    const entryWhere = customerCompanyId
+      ? { OR: [{ warehouse: { companyId: customerCompanyId } }, { directDispatch: true, companyId: customerCompanyId }] }
+      : { warehouseId };
     const [saved, used] = await Promise.all([
-      warehouse.companyId ? prisma.customer.findMany({ where: { companyId: warehouse.companyId }, select: { name: true } }) : [],
+      customerCompanyId ? prisma.customer.findMany({ where: { companyId: customerCompanyId }, select: { name: true } }) : [],
       prisma.min.findMany({ where: entryWhere, select: { customerName: true }, distinct: ["customerName"] }),
     ]);
     const seen = new Set();
@@ -522,16 +595,19 @@ export async function listOutwardCustomers(req, res) {
 // POST /api/outward/customers  { warehouseId, name } - saves a customer for the warehouse's company, once, for every user.
 export async function createOutwardCustomer(req, res) {
   try {
-    const { warehouseId } = req.body || {};
+    const { warehouseId, companyId } = req.body || {};
     const name = cleanCustomerName(req.body?.name);
     if (!name) return res.status(422).json({ message: "Customer name is required" });
     if (name.length > 150) return res.status(422).json({ message: "Customer name must be 150 characters or fewer" });
-    const warehouse = await assertWarehouseAccess(req, warehouseId, null);
-    if (!warehouse.companyId) return res.status(422).json({ message: "This warehouse has no company" });
+    const warehouse = warehouseId ? await assertWarehouseAccess(req, warehouseId, null) : null;
+    const directCompany = !warehouse && companyId ? await assertDirectCompany(req, companyId) : null;
+    if (!warehouse && !directCompany) return res.status(422).json({ message: "warehouseId or companyId is required" });
+    const customerCompanyId = warehouse ? warehouse.companyId : directCompany.id;
+    if (!customerCompanyId) return res.status(422).json({ message: "This warehouse has no company" });
     const nameKey = name.toLowerCase();
     const customer = await prisma.customer.upsert({
-      where: { companyId_nameKey: { companyId: warehouse.companyId, nameKey } },
-      create: { companyId: warehouse.companyId, name, nameKey, createdById: req.user.id },
+      where: { companyId_nameKey: { companyId: customerCompanyId, nameKey } },
+      create: { companyId: customerCompanyId, name, nameKey, createdById: req.user.id },
       update: {},
       select: { id: true, name: true },
     });
@@ -578,7 +654,7 @@ export async function createOutwardCompany(req, res) {
 // ---------------------------------------------------------------------------
 // Validation shared by create + update (Sales side: customer + PI + items + payment status)
 // ---------------------------------------------------------------------------
-function validateSalesPayload(data, items) {
+function validateSalesPayload(data, items, direct = false) {
   if (!data.outwardType) return "outwardType is required";
   if (!data.customerName?.trim()) return "customerName is required";
   if (!data.companyName?.trim()) return "companyName is required";
@@ -590,7 +666,8 @@ function validateSalesPayload(data, items) {
   for (const [index, item] of items.entries()) {
     const label = `Item ${index + 1}`;
     if (!item.category || !item.sku?.trim()) return `${label}: category and model are required`;
-    if (Number(item.quantity) <= 0) return `${label}: quantity must be greater than 0`;
+    // Quantity and UOM are needed for every entry. A "Dispatch directly" entry has no stock check (no warehouse).
+    if (!(Number(item.quantity) > 0)) return `${label}: quantity must be greater than 0`;
     if (!item.uom) return `${label}: UOM is required`;
     const paymentError = validateItemPayment(item, label);
     if (paymentError) return paymentError;
@@ -640,12 +717,19 @@ async function moveTempProofs(minId, outwardNumber) {
 export async function createOutward(req, res) {
   try {
     const data = req.body;
+    const direct = data.directDispatch === true;
+    // "Dispatch directly": no warehouse - the entry belongs to the company, and nothing is taken from warehouse stock.
+    let warehouse = null;
+    let directCompany = null;
+    if (direct) {
+      directCompany = await assertDirectCompany(req, data.companyId);
+      data.companyName = directCompany.name;
+    } else {
+      warehouse = await assertWarehouseAccess(req, data.warehouseId, "canOutward");
+      await assertCompanyForWarehouse(req, warehouse.id, data.companyId);
+    }
     const items = Array.isArray(data.items) ? data.items : [];
-
-    const warehouse = await assertWarehouseAccess(req, data.warehouseId, "canOutward");
-
-    await assertCompanyForWarehouse(req, warehouse.id, data.companyId);
-    const problem = validateSalesPayload(data, items);
+    const problem = validateSalesPayload(data, items, direct);
     if (problem) return res.status(422).json({ message: problem });
 
     // The id is chosen up front so the payment proofs could be uploaded straight into
@@ -657,7 +741,8 @@ export async function createOutward(req, res) {
 
     const [unknownItems, outwardCount] = await Promise.all([
       findUnknownProducts(items),
-      prisma.min.count({ where: { warehouseId: warehouse.id } }),
+      // Direct entries are numbered per company: MIN-<company code>-0001, 0002 ...
+      prisma.min.count({ where: direct ? { directDispatch: true, companyId: directCompany.id } : { warehouseId: warehouse.id } }),
     ]);
     if (unknownItems.length) return res.status(422).json({ message: unknownProductsMessage(unknownItems) });
 
@@ -668,19 +753,23 @@ export async function createOutward(req, res) {
     const MAX_NUMBER_ATTEMPTS = 10;
 
     for (let attempt = 1; attempt <= MAX_NUMBER_ATTEMPTS; attempt += 1) {
-      const outwardNumber = `MIN-${warehouse.code}-${String(sequence).padStart(4, "0")}`;
+      const outwardNumber = `MIN-${direct ? directCompany.code : warehouse.code}-${String(sequence).padStart(4, "0")}`;
       try {
         created = await prisma.$transaction(async (tx) => {
           // Stock is reserved as soon as Sales submits (rejected entries release it again).
-          const stock = await getWarehouseStock(tx, warehouse.id, { onlyItems: items });
-          const shortages = findShortages(items, stock);
-          if (shortages.length) throw httpError(422, shortageMessage(shortages));
+          if (!direct) {
+            const stock = await getWarehouseStock(tx, warehouse.id, { onlyItems: items });
+            const shortages = findShortages(items, stock);
+            if (shortages.length) throw httpError(422, shortageMessage(shortages));
+          }
 
           return tx.min.create({
             data: {
               id: newMinId,
               outwardNumber,
-              warehouseId: warehouse.id,
+              warehouseId: direct ? null : warehouse.id,
+              directDispatch: direct,
+              companyId: direct ? directCompany.id : data.companyId || null,
               outwardType: data.outwardType,
               customerName: data.customerName.trim(),
               companyName: data.companyName.trim(),
@@ -715,7 +804,7 @@ export async function createOutward(req, res) {
         entityId: created.id,
         entityNumber: created.outwardNumber,
         action: "CREATED",
-        description: `Outward entry ${created.outwardNumber} created with ${itemRows.length} item${itemRows.length === 1 ? "" : "s"}`,
+        description: `Outward entry ${created.outwardNumber} created${direct ? " (dispatch directly)" : ""} with ${itemRows.length} item${itemRows.length === 1 ? "" : "s"}`,
         userId: req.user.id,
         warehouseId: created.warehouseId,
       });
@@ -753,12 +842,12 @@ export async function updateOutward(req, res) {
   try {
     const { id } = req.params;
     const data = req.body;
-    const items = Array.isArray(data.items) ? data.items : [];
+    let items = Array.isArray(data.items) ? data.items : [];
 
     const existing = await prisma.min.findUnique({
       where: { id },
       select: {
-        id: true, warehouseId: true, outwardNumber: true, status: true, createdById: true,
+        id: true, warehouseId: true, directDispatch: true, companyId: true, outwardNumber: true, status: true, createdById: true,
         outwardType: true, customerName: true, companyName: true,
         piNumber: true, piDate: true, piAmount: true, piFileKey: true, piFileName: true, piFileType: true,
         shipToContactPerson: true, shipToContactNo: true, shipToLocation: true,
@@ -781,10 +870,18 @@ export async function updateOutward(req, res) {
       }
     }
 
-    const warehouse = await assertWarehouseAccess(req, existing.warehouseId, "canOutward");
+    const direct = Boolean(existing.directDispatch);
+    let directCompany = null;
+    if (direct) {
+      // Dispatch directly: access and the company come from the company, there is no warehouse.
+      await assertEntryVisible(req, existing);
+      directCompany = await assertDirectCompany(req, data.companyId);
+      data.companyName = directCompany.name;
+    }
+    const warehouse = direct ? null : await assertWarehouseAccess(req, existing.warehouseId, "canOutward");
     const proofProblem = proofKeyProblem(items, id, existing.outwardNumber, data.piFileKey);
     if (proofProblem) return res.status(422).json({ message: proofProblem });
-    await assertCompanyForWarehouse(req, warehouse.id, data.companyId, true);
+    if (!direct) await assertCompanyForWarehouse(req, warehouse.id, data.companyId, true);
 
     // A row that still holds its old proof file says keepProof: true.
     const existingById = new Map(existing.items.map((i) => [i.id, i]));
@@ -793,7 +890,7 @@ export async function updateOutward(req, res) {
       return { ...item, keepProof: item.keepProof === true && Boolean(previous?.proofFileKey) };
     });
 
-    const problem = validateSalesPayload(data, normalized);
+    const problem = validateSalesPayload(data, normalized, direct);
     if (problem) return res.status(422).json({ message: problem });
     const piColumns = toPiColumns(data, existing);
     const partyColumns = toPartyColumns(data);
@@ -890,9 +987,11 @@ export async function updateOutward(req, res) {
       const resubmit = current.status === STATUS.PENDING_APPROVAL || wasRejected || wasApproved || wasOnHold;
       sentForApproval = resubmit;
 
-      const stock = await getWarehouseStock(tx, existing.warehouseId, { excludeOutwardId: id, onlyItems: [...newItems, ...existing.items] });
-      const shortages = findShortages(newItems, stock, existing.items);
-      if (shortages.length) throw httpError(422, shortageMessage(shortages));
+      if (!direct) {
+        const stock = await getWarehouseStock(tx, existing.warehouseId, { excludeOutwardId: id, onlyItems: [...newItems, ...existing.items] });
+        const shortages = findShortages(newItems, stock, existing.items);
+        if (shortages.length) throw httpError(422, shortageMessage(shortages));
+      }
 
       await tx.min.update({
         where: { id },
@@ -900,6 +999,7 @@ export async function updateOutward(req, res) {
           outwardType: data.outwardType,
           customerName: data.customerName.trim(),
           companyName: data.companyName.trim(),
+          ...(direct ? { companyId: directCompany.id } : {}),
           ...piColumns,
           ...partyColumns,
           ...(data.outwardDateTime ? { refDocDate: new Date(data.outwardDateTime) } : {}),
@@ -998,7 +1098,7 @@ export async function updateOutward(req, res) {
 async function loadForDecision(req, allowedStatuses, notAllowedMessage, { enforceLock = false } = {}) {
   const min = await prisma.min.findUnique({
     where: { id: req.params.id },
-    select: { id: true, outwardNumber: true, warehouseId: true, status: true, createdById: true, piAmount: true, transportSubmittedAt: true },
+    select: { id: true, outwardNumber: true, warehouseId: true, directDispatch: true, companyId: true, status: true, createdById: true, piAmount: true, transportSubmittedAt: true },
   });
   if (!min) throw httpError(404, "Outward entry not found");
   await assertEntryVisible(req, min);
@@ -1045,7 +1145,9 @@ export async function approveOutward(req, res) {
       userId: req.user.id, warehouseId: min.warehouseId,
     });
     return res.json({
-      message: nextStatus === STATUS.TRANSPORT_PENDING ? "Approved. The warehouse manager can now fill the transportation form." : "Approved.",
+      message: min.directDispatch
+        ? "Approved. Upload the documents to complete this entry - it is then delivered directly."
+        : nextStatus === STATUS.TRANSPORT_PENDING ? "Approved. The warehouse manager can now fill the transportation form." : "Approved.",
       data: { workflowStatus: nextStatus },
     });
   } catch (error) {
@@ -1356,7 +1458,7 @@ export async function saveTransportation(req, res) {
     const base = { entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber, userId: req.user.id, warehouseId: existing.warehouseId };
     const describe = (c) => c.mode === "DEDICATED"
       ? `Dedicated vehicle ${c.vehicleNumber} (driver ${c.driverName}, ${c.driverContact})`
-      : `Transportation ${c.transporterName}${c.transporterId ? ` (ID ${c.transporterId})` : ""}${c.transporterContact ? ` (contact ${c.transporterContact})` : ""}`;
+      : `Transportation ${c.transporterName}${c.transporterId ? ` (ID ${c.transporterId})` : ""}${c.transporterContact ? ` (contact ${c.transporterContact})` : ""}${c.vehicleNumber ? ` (vehicle ${c.vehicleNumber})` : ""}${c.driverContact ? ` (driver contact ${c.driverContact})` : ""}`;
     const entries = isFirstTime
       ? [{ ...base, action: "TRANSPORT_SUBMITTED", description: `Transportation details submitted: ${describe({ ...columns, mode: columns.transportMode })}` }]
       : diffFields(existing, columns, ["transportMode", "dispatchMode", "vehicleNumber", "driverName", "driverContact", "transporterId", "transporterName", "transporterContact"])
@@ -1547,7 +1649,7 @@ export async function saveAccountDocuments(req, res) {
 
     const existing = await prisma.min.findUnique({
       where: { id },
-      select: { id: true, warehouseId: true, outwardNumber: true, status: true, createdById: true, piAmount: true, vehicleNumber: true, transportSubmittedAt: true },
+      select: { id: true, warehouseId: true, directDispatch: true, companyId: true, outwardNumber: true, status: true, createdById: true, piAmount: true, vehicleNumber: true, transportSubmittedAt: true },
     });
     if (!existing) return res.status(404).json({ message: "Outward entry not found" });
     await assertEntryVisible(req, existing);
@@ -1565,6 +1667,7 @@ export async function saveAccountDocuments(req, res) {
     const resulting = [...savedDocs.filter((d) => !incoming.has(lowerCat(d.docCategory))), ...categories.map((c) => ({ docCategory: c }))];
     const savedRefs = await prisma.minReferenceDocument.findMany({ where: { minId: id }, select: { refDocType: true } });
     const wasShared = hasReleaseDocument(savedDocs, savedRefs);
+    // Dispatch directly: documents and reference numbers are optional - Account can submit with nothing attached.
     // Account's reference rows are replaced by the ones in this request; the manager's rows stay.
     const resultingRefs = [...savedRefs.filter((r) => !isAccountRefType(r.refDocType)), ...refs];
     const willShare = hasReleaseDocument(resulting, resultingRefs);
@@ -1573,7 +1676,7 @@ export async function saveAccountDocuments(req, res) {
     let replaced = [];
     try {
       await prisma.$transaction(async (tx) => {
-        const current = await tx.min.findFirst({ where: { id, status: { in: ACCOUNT_DOC_STATUSES }, transportSubmittedAt: { not: null } }, select: { id: true } });
+        const current = await tx.min.findFirst({ where: { id, status: { in: ACCOUNT_DOC_STATUSES }, ...(existing.directDispatch ? {} : { transportSubmittedAt: { not: null } }) }, select: { id: true } });
         if (!current) throw httpError(409, "This entry was just updated by someone else");
 
         await tx.min.update({
@@ -1594,8 +1697,13 @@ export async function saveAccountDocuments(req, res) {
             })),
           });
         }
-        // Account pressed Submit / Save: the entry is released to the warehouse manager (documents are optional).
-        await tx.min.updateMany({ where: { id, status: { in: APPROVED_STATUSES } }, data: { status: STATUS.READY_FOR_DISPATCH } });
+        if (existing.directDispatch) {
+          // Dispatch directly: the documents complete the entry - it is delivered, no warehouse step.
+          await tx.min.updateMany({ where: { id, status: { in: APPROVED_STATUSES } }, data: { status: STATUS.DELIVERED } });
+        } else {
+          // Account pressed Submit / Save: the entry is released to the warehouse manager (documents are optional).
+          await tx.min.updateMany({ where: { id, status: { in: APPROVED_STATUSES } }, data: { status: STATUS.READY_FOR_DISPATCH } });
+        }
       });
     } catch (txError) {
       if (uploaded.length) await supabase.storage.from(SUPABASE_BUCKET).remove(uploaded.map((u) => u.fileKey)).catch(() => {});
@@ -1608,7 +1716,8 @@ export async function saveAccountDocuments(req, res) {
 
     const base = { entityType: "OUTWARD", entityId: id, entityNumber: existing.outwardNumber, userId: req.user.id, warehouseId: existing.warehouseId };
     const entries = [{ ...base, action: "UPDATED", description: `Account reference documents saved (${refs.length})` }];
-    if (existing.status !== STATUS.READY_FOR_DISPATCH) entries.push({ ...base, action: "UPDATED", description: "Account submitted - dispatch form opened for the warehouse manager" });
+    if (existing.directDispatch) entries.push({ ...base, action: "UPDATED", description: "Documents uploaded by Account - delivered directly (no warehouse)" });
+    else if (existing.status !== STATUS.READY_FOR_DISPATCH) entries.push({ ...base, action: "UPDATED", description: "Account submitted - dispatch form opened for the warehouse manager" });
     for (const u of uploaded) {
       const isInvoice = isInvoiceDocCategory(u.docCategory);
       entries.push({ ...base, action: isInvoice ? "INVOICE_CREATED" : "DOCUMENT_ADDED", description: isInvoice ? `Invoice created by ${req.user.name}` : `Document added: ${u.docCategory} (${u.fileName})`, changes: { docCategory: u.docCategory, fileName: u.fileName } });
@@ -1627,7 +1736,7 @@ export async function saveAccountDocuments(req, res) {
       }),
       prisma.document.findMany({ where: { linkedType: "outward", linkedId: id }, orderBy: { uploadedAt: "desc" } }),
     ]);
-    return res.json({ message: "Documents saved", data: finishFor(req, result, documents) });
+    return res.json({ message: existing.directDispatch ? "Documents saved. This entry is now delivered directly." : "Documents saved", data: finishFor(req, result, documents) });
   } catch (error) {
     console.error("Save account documents error:", error);
     return res.status(error.status || 500).json({ message: error.message || "Failed to save documents" });
@@ -1683,7 +1792,7 @@ export async function downloadItemProof(req, res) {
   try {
     const item = await prisma.minItem.findUnique({
       where: { id: req.params.itemId },
-      select: { id: true, minId: true, proofFileKey: true, proofFileName: true, min: { select: { id: true, warehouseId: true, createdById: true, status: true } } },
+      select: { id: true, minId: true, proofFileKey: true, proofFileName: true, min: { select: { id: true, warehouseId: true, directDispatch: true, companyId: true, createdById: true, status: true } } },
     });
     if (!item || item.minId !== req.params.id || !item.proofFileKey) return res.status(404).json({ message: "No proof file for this item" });
     await assertEntryVisible(req, item.min);
@@ -1706,7 +1815,7 @@ export async function downloadPiFile(req, res) {
   try {
     const min = await prisma.min.findUnique({
       where: { id: req.params.id },
-      select: { id: true, outwardNumber: true, warehouseId: true, createdById: true, status: true, piFileKey: true, piFileName: true },
+      select: { id: true, outwardNumber: true, warehouseId: true, directDispatch: true, companyId: true, createdById: true, status: true, piFileKey: true, piFileName: true },
     });
     if (!min || !min.piFileKey) return res.status(404).json({ message: "No PI file for this entry" });
     await assertEntryVisible(req, min);
@@ -1770,17 +1879,26 @@ export async function listOutwardHistory(req, res) {
     let entityFilter = {};
     if (req.user.role === "SALES" || isWarehouse) {
       const mins = await prisma.min.findMany({
-        where: { AND: [roleWhere(req), scopedWarehouseIds ? { warehouseId: { in: scopedWarehouseIds } } : {}] },
+        where: { AND: [roleWhere(req), await entryScopeWhere(req)] },
         select: { id: true },
       });
       entityFilter = { entityId: { in: mins.map((m) => m.id) } };
     }
 
+    // "Dispatch directly" entries have no warehouse, so their trail is found through the entry ids instead.
+    let directIds = [];
+    if (isFinanceSide(req.user.role)) {
+      const directMins = await prisma.min.findMany({ where: { AND: [await entryScopeWhere(req), { directDispatch: true }] }, select: { id: true } });
+      directIds = directMins.map((m) => m.id);
+    }
+
     const where = {
       entityType: "OUTWARD",
       AND: [
-        scopedWarehouseIds ? { warehouseId: { in: scopedWarehouseIds } } : {},
-        warehouseId ? { warehouseId } : {},
+        scopedWarehouseIds
+          ? { OR: [{ warehouseId: { in: scopedWarehouseIds } }, ...(directIds.length ? [{ entityId: { in: directIds } }] : [])] }
+          : {},
+        warehouseId === "DIRECT" ? { entityId: { in: directIds } } : warehouseId ? { warehouseId } : {},
         entityFilter,
         isWarehouse ? { action: { notIn: HIDDEN_FROM_WAREHOUSE_ACTIONS } } : {},
         search ? { entityNumber: { contains: search, mode: "insensitive" } } : {},

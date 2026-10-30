@@ -196,11 +196,13 @@ export const createOutward = createAsyncThunk(
 // Uploads one payment-proof file and returns { fileKey, fileName, fileType }.
 export const uploadOutwardProof = createAsyncThunk(
   "outward/uploadProof",
-  async ({ file, warehouseId, outwardId, kind }, { rejectWithValue }) => {
+  async ({ file, warehouseId, companyId, outwardId, kind }, { rejectWithValue }) => {
     try {
       const formData = new FormData();
       // Text fields go first so the server knows the target folder: min/<warehouse>/<outwardId>/
-      formData.append("warehouseId", warehouseId);
+      // "Dispatch directly" has no warehouse: the company is sent instead.
+      if (warehouseId) formData.append("warehouseId", warehouseId);
+      else if (companyId) formData.append("companyId", companyId);
       formData.append("outwardId", outwardId);
       if (kind) formData.append("kind", kind); // "pi" -> saved as PI.<ext>; no kind -> saved as payment.<ext>
       formData.append("file", file);

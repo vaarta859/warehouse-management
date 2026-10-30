@@ -217,6 +217,9 @@ export function formatOutwardEntry(outward, index) {
     requiredDocuments: statusData.requiredDocuments,
     items,
     workflowStatus: outward.workflowStatus || null,
+    // "Dispatch directly": no warehouse, delivered as soon as Account uploads the documents.
+    directDispatch: Boolean(outward.directDispatch),
+    companyId: outward.companyId || null,
     stage: outward.stage || null,
     invoiceCreated: Boolean(outward.invoiceCreated),
     editLocked: Boolean(outward.editLocked),
@@ -294,6 +297,10 @@ export const RECEIVING_STATE = {
   completed: { label: "Delivered", cls: "bg-green-100 text-green-700" },
 };
 
+// "Dispatch directly" entries have no receiving step: they are delivered as soon as Account uploads the documents.
+export const DIRECT_DELIVERED_STYLE = { label: "Delivered directly", cls: "bg-green-100 text-green-700" };
+export const DIRECT_DISPATCH_LABEL = "Dispatch directly";
+
 export const INVOICE_CREATED_STYLE = { label: "Invoice created", cls: "bg-sky-100 text-sky-700" };
 
 export const getStatusStyle = (outward) => {
@@ -301,6 +308,7 @@ export const getStatusStyle = (outward) => {
   const dispatched = outward.workflowStatus
     ? isDispatchedStatus(outward.workflowStatus)
     : outward.dispatchState === "Dispatched";
+  if (dispatched && outward.directDispatch) return DIRECT_DELIVERED_STYLE;
   if (dispatched) return isReceived(outward) ? RECEIVING_STATE.completed : RECEIVING_STATE.pending;
   // Account created the invoice (never sent to the warehouse manager): the status moves on from "Awaiting acc. documents".
   if (outward.invoiceCreated && outward.stage === "DOCS_PENDING") return INVOICE_CREATED_STYLE;

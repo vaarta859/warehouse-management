@@ -336,6 +336,8 @@ export default function OutwardDispatch() {
                       <InfoField label="Transporter ID" value={outward.transporterId} />
                       <InfoField label="Transporter name" value={outward.transporterName} />
                       <InfoField label="Transporter contact" value={outward.transporterContact} />
+                      <InfoField label="Vehicle no." value={outward.vehicleNumber} />
+                      <InfoField label="Driver contact" value={outward.driverContact} />
                     </>
                   ) : (
                     <>
