@@ -13,7 +13,7 @@ import AddProductModal from "./AddProductModal";
 const sameText = (a, b) =>
   String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
-function SearchableSelect({
+export function SearchableSelect({
   value,
   options,
   disabled,

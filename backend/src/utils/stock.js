@@ -79,6 +79,18 @@ export async function getWarehouseStock(db, warehouseId, { excludeOutwardId, onl
     _sum: { quantity: true },
   });
 
+  // Stock moved between companies / warehouses by a transfer: counts as inward where it arrives, outward where it leaves.
+  const transferInGroups = await db.stockTransferItem.groupBy({
+    by: ["category", "sku", "uom"],
+    where: { transfer: { toWarehouseId: warehouseId }, ...skuFilter },
+    _sum: { quantity: true },
+  });
+  const transferOutGroups = await db.stockTransferItem.groupBy({
+    by: ["category", "sku", "uom"],
+    where: { transfer: { fromWarehouseId: warehouseId }, ...skuFilter },
+    _sum: { quantity: true },
+  });
+
   const stock = new Map();
   const add = (row, field) => {
     const key = stockKey(row.category, row.sku);
@@ -98,6 +110,8 @@ export async function getWarehouseStock(db, warehouseId, { excludeOutwardId, onl
   };
   for (const row of inwardGroups) add(row, "inward");
   for (const row of outwardGroups) add(row, "outward");
+  for (const row of transferInGroups) add(row, "inward");
+  for (const row of transferOutGroups) add(row, "outward");
 
   for (const row of stock.values()) row.available = row.inward - row.outward;
   return stock;
@@ -186,6 +200,14 @@ export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwa
     select: { category: true, sku: true, quantity: true, min: { select: { outwardType: true, companyName: true } } },
   });
 
+  const transferRows = await db.stockTransferItem.findMany({
+    where: { transfer: { OR: [{ toWarehouseId: warehouseId }, { fromWarehouseId: warehouseId }] } },
+    select: {
+      category: true, sku: true, quantity: true, stockType: true,
+      transfer: { select: { toWarehouseId: true, toCompanyName: true, fromWarehouseId: true, fromCompanyName: true } },
+    },
+  });
+
   // key -> companyKey -> { companyName, types: Map<type, qty> }
   const groups = new Map();
   const groupFor = (key, companyName) => {
@@ -202,6 +224,25 @@ export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwa
     const type = canonicalInwardType(row.grn?.inwardType) || INWARD.NEW;
     const group = groupFor(stockKey(row.category, row.sku), row.grn?.companyName || row.companyName);
     group.types.set(type, (group.types.get(type) || 0) + qty);
+  }
+  // Transfers: arriving stock is added to the receiving company; leaving stock is taken from the sending company
+  // (from the exact stock type that was sent).
+  for (const row of transferRows) {
+    const qty = Number(row.quantity) || 0;
+    if (!qty) continue;
+    const type = canonicalInwardType(row.stockType) || INWARD.NEW;
+    const key = stockKey(row.category, row.sku);
+    if (row.transfer.toWarehouseId === warehouseId) {
+      const group = groupFor(key, row.transfer.toCompanyName);
+      group.types.set(type, (group.types.get(type) || 0) + qty);
+    }
+  }
+  for (const row of transferRows) {
+    const qty = Number(row.quantity) || 0;
+    if (!qty || row.transfer.fromWarehouseId !== warehouseId) continue;
+    const type = canonicalInwardType(row.stockType) || INWARD.NEW;
+    const group = groups.get(stockKey(row.category, row.sku))?.get(companyKeyOf(row.transfer.fromCompanyName));
+    if (group) group.types.set(type, (group.types.get(type) || 0) - qty);
   }
   for (const row of outwardRows) {
     const qty = Number(row.quantity) || 0;
@@ -235,4 +276,47 @@ export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwa
     result.set(key, lines);
   }
   return result;
+}
+
+
+/**
+ * Splits one company + warehouse + product into stock types (New / Service / Return / Faulty / Repair).
+ *
+ *   inward, transferIn, transferOut : Map<type, qty>
+ *   outwardList                     : [{ outwardType, qty }]
+ *
+ * Transfers name their stock type exactly. Outward entries do not, so each is taken from the types its outward
+ * type may use (OUTWARD_STOCK_SOURCES) - after the stock that already left by transfer is set aside.
+ * Returns [{ type, inward, transferIn, transferOut, outward }].
+ */
+export function balancesByType({ inward, transferIn = new Map(), transferOut = new Map() }, outwardList = []) {
+  const outwardByType = new Map();
+  const have = (type) =>
+    (inward.get(type) || 0) + (transferIn.get(type) || 0) - (transferOut.get(type) || 0) - (outwardByType.get(type) || 0);
+  const knownTypes = [...new Set([...inward.keys(), ...transferIn.keys()])];
+
+  for (const { outwardType, qty } of outwardList) {
+    let left = qty;
+    const preferred = OUTWARD_STOCK_SOURCES[outwardType] || [];
+    const order = [...preferred, ...knownTypes.filter((t) => !preferred.includes(t))];
+    for (const type of order) {
+      if (left <= 0) break;
+      const take = Math.min(Math.max(have(type), 0), left);
+      if (take > 0) { outwardByType.set(type, (outwardByType.get(type) || 0) + take); left -= take; }
+    }
+    // More went out than came in: show it against the type this outward normally takes from (negative stock).
+    if (left > 0) {
+      const type = preferred[0] || INWARD.NEW;
+      outwardByType.set(type, (outwardByType.get(type) || 0) + left);
+    }
+  }
+
+  const types = new Set([...inward.keys(), ...transferIn.keys(), ...transferOut.keys(), ...outwardByType.keys()]);
+  return [...types].map((type) => ({
+    type,
+    inward: inward.get(type) || 0,
+    transferIn: transferIn.get(type) || 0,
+    transferOut: transferOut.get(type) || 0,
+    outward: outwardByType.get(type) || 0,
+  }));
 }

@@ -1,4 +1,5 @@
 import { requiredSerialLines, serialKey } from "./serials.js";
+import { transferInSerialRows, transferOutSerialRows, transferInSerialRowsForLines } from "./transferSerials.js";
 
 // Natural, increasing order: "I2690100002" before "I2690100010" (plain text order would put "...10" before "...2").
 const serialCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -81,7 +82,7 @@ export async function findSerialSourceProblem(db, { warehouseId, outwardType, mi
   if (!allowed) return null; // an outward type with no source rule
 
   const match = serials.map((s) => ({ serialNo: { equals: s.serialNo, mode: "insensitive" } }));
-  const [inwardRows, outwardRows] = await Promise.all([
+  const [grnRows, minRows, transferIns, transferOuts] = await Promise.all([
     db.grnSerial.findMany({
       where: { OR: match, grn: { warehouseId } },
       select: { serialNo: true, category: true, sku: true, grn: { select: { inwardType: true, createdAt: true } } },
@@ -90,7 +91,12 @@ export async function findSerialSourceProblem(db, { warehouseId, outwardType, mi
       where: { minId: { not: minId }, OR: match, min: { status: { not: "REJECTED" } } },
       select: { serialNo: true, category: true, sku: true, min: { select: { outwardNumber: true, createdAt: true, status: true } } },
     }),
+    // A serial moved here by a stock transfer counts as received here; one moved away counts as gone.
+    transferInSerialRows(db, { warehouseId, serials }),
+    transferOutSerialRows(db, { serials }),
   ]);
+  const inwardRows = [...grnRows, ...transferIns];
+  const outwardRows = [...minRows, ...transferOuts];
 
   const problems = [];
   const usedProblems = [];
@@ -158,7 +164,7 @@ export async function listAvailableSerials(db, { warehouseId, outwardType, minId
   lines.forEach((l) => { result[serialKey(l.category, l.sku)] = []; });
   if (!lines.length) return result;
 
-  const inwardRows = await db.grnSerial.findMany({
+  const grnRows = await db.grnSerial.findMany({
     where: {
       grn: { warehouseId },
       OR: lines.map((l) => ({ category: { equals: l.category, mode: "insensitive" }, sku: { equals: l.sku, mode: "insensitive" } })),
@@ -167,13 +173,19 @@ export async function listAvailableSerials(db, { warehouseId, outwardType, minId
     orderBy: { serialNo: "asc" },
     take: 20000,
   });
+  // Serials that arrived in this warehouse through a stock transfer are in stock here too.
+  const inwardRows = [...grnRows, ...(await transferInSerialRowsForLines(db, { warehouseId, lines }))];
   const eligible = inwardRows.filter((r) => !allowed || allowed.includes(canonicalInwardType(r.grn.inwardType)));
   if (!eligible.length) return result;
 
-  const usedRows = await db.minSerial.findMany({
-    where: { minId: { not: minId }, serialNo: { in: [...new Set(eligible.map((r) => r.serialNo))] }, min: { status: { not: "REJECTED" } } },
+  const eligibleSerialNos = [...new Set(eligible.map((r) => r.serialNo))];
+  const minUsed = await db.minSerial.findMany({
+    where: { minId: { not: minId }, serialNo: { in: eligibleSerialNos }, min: { status: { not: "REJECTED" } } },
     select: { serialNo: true, category: true, sku: true, min: { select: { createdAt: true } } },
   });
+  // A serial that left this warehouse by a stock transfer is not available here any more.
+  const transferUsed = await transferOutSerialRows(db, { serials: eligibleSerialNos.map((serialNo) => ({ serialNo })) });
+  const usedRows = [...minUsed, ...transferUsed];
   // keyed by product + serial: the same number on another model is a different unit
   const lastOut = new Map();
   for (const u of usedRows) {

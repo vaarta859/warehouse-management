@@ -2,7 +2,7 @@ import prisma from "../config/prisma.js";
 import { warehouseIdsForCompanies } from "../utils/warehouseCompanies.js";
 import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
 import { INWARD, canonicalInwardType, canonicalOutwardType } from "../utils/serialSources.js";
-import { OUTWARD_STOCK_SOURCES } from "../utils/stock.js";
+import { balancesByType } from "../utils/stock.js";
  
 /**
  * =========================================================
@@ -128,10 +128,23 @@ export async function getReportSummary(req, res) {
     const period = periodWhere(dateFrom, dateTo);
  
     // ---- units currently on hand (all-time) ----
-    const [stockIn, stockOut] = await Promise.all([
+    const [stockIn0, stockOut0, transferIn, transferOut] = await Promise.all([
       prisma.grnItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeGrn }),
       prisma.minItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeMin }),
+      // Stock transfers: arriving stock counts where it arrives, leaving stock where it leaves.
+      prisma.stockTransferItem.groupBy({
+        by: ["uom"],
+        _sum: { quantity: true },
+        where: { transfer: warehouseIds ? { toWarehouseId: { in: warehouseIds } } : {} },
+      }),
+      prisma.stockTransferItem.groupBy({
+        by: ["uom"],
+        _sum: { quantity: true },
+        where: { transfer: warehouseIds ? { fromWarehouseId: { in: warehouseIds } } : {} },
+      }),
     ]);
+    const stockIn = [...stockIn0, ...transferIn];
+    const stockOut = [...stockOut0, ...transferOut];
     // Quantities are kept per unit of measure (Pcs, Meters ...) - cables are not "units".
     const byUom = (groups) => {
       const out = {};
@@ -336,6 +349,7 @@ export async function getStockLedger(req, res) {
     }
 
     let companyFilter = {};
+    let companyNames = null; // null = no company limit (used for the stock transfer rows)
     // Sales / Account are limited to their companies' entries even with no company chosen. A warehouse
     // manager looking at a warehouse they manage sees that whole warehouse (unless they pick a company).
     if (companyId || isFinanceSide(req.user.role)) {
@@ -347,6 +361,7 @@ export async function getStockLedger(req, res) {
       companyFilter = {
         OR: companies.map((c) => ({ companyName: { equals: c.name.trim(), mode: "insensitive" } })),
       };
+      companyNames = companies.map((c) => c.name.trim());
       // Company chosen but no warehouse: narrow to that company's warehouses (still only ones the caller may see).
       if (companyId && !warehouseId) {
         warehouseIds = await warehouseIdsForCompanies([companyId], warehouseIds);
@@ -366,7 +381,10 @@ export async function getStockLedger(req, res) {
     // Outward entries don't record which inward type they were taken from, so each one is taken from the
     // types its outward type uses (Sale <- New / Return, Service <- Service / Faulty, Replacement <- Service /
     // Repair, Scrap <- Faulty) - the same rule as the outward form's stock list.
-    const [inwardRows, outwardRows] = await Promise.all([
+    const transferCompanyWhere = (field) =>
+      companyNames ? { OR: companyNames.map((name) => ({ [field]: { equals: name, mode: "insensitive" } })) } : {};
+    const transferSelect = { category: true, sku: true, uom: true, quantity: true, stockType: true };
+    const [inwardRows, outwardRows, transferInRows, transferOutRows] = await Promise.all([
       prisma.grnItem.findMany({
         where: { grn: { AND: [warehouseWhere(warehouseIds), companyFilter] }, ...searchWhere },
         select: { category: true, sku: true, uom: true, quantity: true, companyName: true, grn: { select: { warehouseId: true, inwardType: true, companyName: true } } },
@@ -375,6 +393,20 @@ export async function getStockLedger(req, res) {
         // A rejected outward never leaves the warehouse, so it is not counted (same rule as the outward form).
         where: { min: { AND: [warehouseWhere(warehouseIds), companyFilter], status: { not: "REJECTED" } }, ...searchWhere },
         select: { category: true, sku: true, uom: true, quantity: true, min: { select: { warehouseId: true, outwardType: true, companyName: true } } },
+      }),
+      prisma.stockTransferItem.findMany({
+        where: {
+          transfer: { AND: [warehouseIds ? { toWarehouseId: { in: warehouseIds } } : {}, transferCompanyWhere("toCompanyName")] },
+          ...searchWhere,
+        },
+        select: { ...transferSelect, transfer: { select: { toWarehouseId: true, toCompanyName: true } } },
+      }),
+      prisma.stockTransferItem.findMany({
+        where: {
+          transfer: { AND: [warehouseIds ? { fromWarehouseId: { in: warehouseIds } } : {}, transferCompanyWhere("fromCompanyName")] },
+          ...searchWhere,
+        },
+        select: { ...transferSelect, transfer: { select: { fromWarehouseId: true, fromCompanyName: true } } },
       }),
     ]);
 
@@ -397,6 +429,8 @@ export async function getStockLedger(req, res) {
           sku: row.sku,
           uom: row.uom,
           inward: new Map(),
+          transferIn: new Map(),
+          transferOut: new Map(),
           outwardList: [],
         });
       }
@@ -409,6 +443,20 @@ export async function getStockLedger(req, res) {
       const g = groupFor(row, row.grn?.warehouseId, row.grn?.companyName || row.companyName);
       const type = canonicalInwardType(row.grn?.inwardType) || INWARD.NEW;
       g.inward.set(type, (g.inward.get(type) || 0) + qty);
+    }
+    for (const row of transferInRows) {
+      const qty = Number(row.quantity) || 0;
+      if (!qty) continue;
+      const g = groupFor(row, row.transfer.toWarehouseId, row.transfer.toCompanyName);
+      const type = canonicalInwardType(row.stockType) || INWARD.NEW;
+      g.transferIn.set(type, (g.transferIn.get(type) || 0) + qty);
+    }
+    for (const row of transferOutRows) {
+      const qty = Number(row.quantity) || 0;
+      if (!qty) continue;
+      const g = groupFor(row, row.transfer.fromWarehouseId, row.transfer.fromCompanyName);
+      const type = canonicalInwardType(row.stockType) || INWARD.NEW;
+      g.transferOut.set(type, (g.transferOut.get(type) || 0) + qty);
     }
     for (const row of outwardRows) {
       const qty = Number(row.quantity) || 0;
@@ -425,26 +473,7 @@ export async function getStockLedger(req, res) {
 
     const ledgerRows = [];
     for (const g of groups.values()) {
-      const outwardByType = new Map();
-      for (const { outwardType, qty } of g.outwardList) {
-        let left = qty;
-        const preferred = OUTWARD_STOCK_SOURCES[outwardType] || [];
-        const order = [...preferred, ...[...g.inward.keys()].filter((t) => !preferred.includes(t))];
-        for (const type of order) {
-          if (left <= 0) break;
-          const used = outwardByType.get(type) || 0;
-          const take = Math.min(Math.max((g.inward.get(type) || 0) - used, 0), left);
-          if (take > 0) { outwardByType.set(type, used + take); left -= take; }
-        }
-        // More went out than came in: show it against the type this outward normally takes from (negative stock).
-        if (left > 0) {
-          const type = preferred[0] || INWARD.NEW;
-          outwardByType.set(type, (outwardByType.get(type) || 0) + left);
-        }
-      }
-      for (const type of new Set([...g.inward.keys(), ...outwardByType.keys()])) {
-        const inward = g.inward.get(type) || 0;
-        const outward = outwardByType.get(type) || 0;
+      for (const b of balancesByType(g, g.outwardList)) {
         ledgerRows.push({
           companyName: g.companyName,
           warehouseId: g.warehouseId,
@@ -452,10 +481,12 @@ export async function getStockLedger(req, res) {
           category: g.category,
           sku: g.sku,
           uom: g.uom,
-          stockType: TYPE_LABELS[type] || type,
-          inward,
-          outward,
-          currentStock: inward - outward,
+          stockType: TYPE_LABELS[b.type] || b.type,
+          inward: b.inward,
+          outward: b.outward,
+          transferIn: b.transferIn,
+          transferOut: b.transferOut,
+          currentStock: b.inward + b.transferIn - b.outward - b.transferOut,
         });
       }
     }
@@ -475,18 +506,22 @@ export async function getStockLedger(req, res) {
       (acc, row) => {
         acc.totalInward += row.inward;
         acc.totalOutward += row.outward;
+        acc.totalTransferIn += row.transferIn;
+        acc.totalTransferOut += row.transferOut;
         acc.currentStock += row.currentStock;
         return acc;
       },
-      { totalInward: 0, totalOutward: 0, currentStock: 0 }
+      { totalInward: 0, totalOutward: 0, totalTransferIn: 0, totalTransferOut: 0, currentStock: 0 }
     );
     // Same totals per unit of measure, so meters and pieces are never added together.
     const totalsByUom = {};
     for (const row of allRows) {
       const u = row.uom || "Pcs";
-      const t = (totalsByUom[u] ||= { totalInward: 0, totalOutward: 0, currentStock: 0 });
+      const t = (totalsByUom[u] ||= { totalInward: 0, totalOutward: 0, totalTransferIn: 0, totalTransferOut: 0, currentStock: 0 });
       t.totalInward += row.inward;
       t.totalOutward += row.outward;
+      t.totalTransferIn += row.transferIn;
+      t.totalTransferOut += row.transferOut;
       t.currentStock += row.currentStock;
     }
     totals.byUom = totalsByUom;

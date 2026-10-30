@@ -13,6 +13,7 @@ import warehouseRoutes from "./routes/warehouseRoutes.js";
 import companyRoutes from "./routes/companyRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
+import transferRoutes from "./routes/transferRoutes.js";
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/transfers", transferRoutes);
 
 // 404 fallback
 app.use((req, res) => {

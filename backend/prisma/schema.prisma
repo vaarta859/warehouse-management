@@ -515,4 +515,70 @@ model GrnSerial {
   @@index([grnId, category, sku])
 }
 
+// =====================================================
+// STOCK TRANSFER (company A / warehouse -> company B / warehouse)
+// Standalone on purpose: ids + name snapshots, no relations to
+// Company / Warehouse / User.
+// =====================================================
 
+model StockTransfer {
+  id                String   @id @default(uuid())
+  transferNumber    String   @unique
+
+  fromCompanyId     String
+  fromCompanyName   String
+  fromWarehouseId   String
+  fromWarehouseName String
+
+  toCompanyId       String
+  toCompanyName     String
+  toWarehouseId     String
+  toWarehouseName   String
+
+  remarks           String?
+  createdById       String
+  createdByName     String?
+  createdAt         DateTime @default(now())
+
+  items             StockTransferItem[]
+  serials           StockTransferSerial[]
+
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
+  @@index([fromCompanyId])
+  @@index([toCompanyId])
+  @@index([createdAt])
+}
+
+model StockTransferItem {
+  id          String        @id @default(uuid())
+  transferId  String
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  category    String
+  sku         String
+  uom         String
+  quantity    Int
+  // Same labels as inward types, e.g. "Purchase - New Stock"
+  stockType   String
+
+  @@index([transferId])
+  @@index([category, sku])
+}
+
+model StockTransferSerial {
+  id          String        @id @default(uuid())
+  transferId  String
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  category    String
+  sku         String
+  serialNo    String
+  stockType   String
+  source      String        @default("MANUAL")
+  
+  referenceDocuments Json?
+
+  @@index([transferId])
+  @@index([serialNo])
+}

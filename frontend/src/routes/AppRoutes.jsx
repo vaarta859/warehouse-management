@@ -24,6 +24,8 @@ import {
   WarehouseManagement,
   CompanyManagement,
   StockLedger,
+  StockTransfers,
+  StockTransferForm,
   ProductManagement,
 } from "./lazyPages";
 
@@ -91,6 +93,9 @@ const router = createBrowserRouter([
   // Full-screen flows (create forms + detail pages) - these have
   // their own header + Back button and intentionally render
   // without the sidebar/navbar shell.
+  // Stock transfer between companies: the form is for the Account team and Super Admin, the list is view-only for everyone who sees the ledger.
+  { path: "/stock-ledger/transfer", element: fullScreen(<StockTransferForm />, ["SUPER_ADMIN", "ACCOUNT"]) },
+  { path: "/stock-ledger/transfers", element: fullScreen(<StockTransfers />, VIEW_ROLES) },
   { path: "/inward/create", element: fullScreen(<InwardForm />, INVENTORY_ROLES) },
   { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, ["SUPER_ADMIN"]) },
   { path: "/inward/:id", element: fullScreen(<InwardDetail />, VIEW_ROLES) },

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronDown, PackageMinus, PackagePlus, Search, Warehouse } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ChevronDown, PackageMinus, PackagePlus, Search, Warehouse } from "lucide-react";
 
 import { fetchWarehouses, selectWarehouses, selectSelectedWarehouse } from "../features/warehouse/warehouseSlice";
 import {
@@ -204,6 +204,22 @@ export default function StockLedger() {
             <p className="mt-0.5 text-xs text-gray-500 sm:mt-1 sm:text-sm">{scopeLabel}</p>
           </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/stock-ledger/transfers"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Transfers
+          </Link>
+          {(user?.role === "ACCOUNT" || user?.role === "SUPER_ADMIN") && (
+            <Link
+              to="/stock-ledger/transfer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#185FA5] px-3 py-2 text-xs font-semibold text-white"
+            >
+              <ArrowLeftRight size={14} />
+              Transfer
+            </Link>
+          )}
           <div className="relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -213,6 +229,7 @@ export default function StockLedger() {
               placeholder="Search category or model"
               className="w-64 rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
             />
+          </div>
           </div>
         </div>
 
@@ -327,32 +344,36 @@ export default function StockLedger() {
 
               {!loading && rows.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="mobile-cards w-full min-w-[920px] text-left">
+                  <table className="mobile-cards w-full min-w-0 text-left">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Category</th>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Model / SKU</th>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Company</th>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Warehouse</th>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Stock type</th>
-                        <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">UOM</th>
-                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Inward</th>
-                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Outward</th>
-                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500">Current Stock</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Category</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Model / SKU</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Company</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Warehouse</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Stock type</th>
+                        <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">UOM</th>
+                        <th className="px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-tight text-gray-500">Inward</th>
+                        <th className="px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-tight text-gray-500">Outward</th>
+                        <th className="px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-tight text-gray-500">Transfer In</th>
+                        <th className="px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-tight text-gray-500">Transfer Out</th>
+                        <th className="px-2 py-2.5 text-right text-[10px] font-semibold uppercase tracking-tight text-gray-500">Current Stock</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {rows.map((row) => (
                         <tr key={`${row.companyName}-${row.warehouseId}-${row.category}-${row.sku}-${row.stockType}`}>
-                          <td className="px-5 py-3.5 text-xs text-gray-700">{row.category}</td>
-                          <td className="px-5 py-3.5 text-xs font-medium text-gray-800">{row.sku}</td>
-                          <td data-label="Company" className="px-5 py-3.5 text-xs text-gray-700">{row.companyName || "-"}</td>
-                          <td data-label="Warehouse" className="px-5 py-3.5 text-xs text-gray-700">{row.warehouseName || "-"}</td>
-                          <td data-label="Stock type" className="px-5 py-3.5 text-xs font-medium text-gray-800">{row.stockType}</td>
-                          <td className="px-5 py-3.5 text-xs text-gray-500">{row.uom}</td>
-                          <td className="px-5 py-3.5 text-right text-xs font-semibold text-green-700">+{formatNumber(row.inward)}</td>
-                          <td className="px-5 py-3.5 text-right text-xs font-semibold text-red-600">-{formatNumber(row.outward)}</td>
-                          <td className="px-5 py-3.5 text-right text-sm font-semibold tabular-nums text-gray-900">
+                          <td className="px-2 py-2.5 text-[11px] text-gray-700">{row.category}</td>
+                          <td className="px-2 py-2.5 text-[11px] font-medium text-gray-800">{row.sku}</td>
+                          <td data-label="Company" className="px-2 py-2.5 text-[11px] text-gray-700">{row.companyName || "-"}</td>
+                          <td data-label="Warehouse" className="px-2 py-2.5 text-[11px] text-gray-700">{row.warehouseName || "-"}</td>
+                          <td data-label="Stock type" className="px-2 py-2.5 text-[11px] font-medium text-gray-800">{row.stockType}</td>
+                          <td className="px-2 py-2.5 text-[11px] text-gray-500">{row.uom}</td>
+                          <td className="px-2 py-2.5 text-right text-[11px] font-semibold text-green-700">+{formatNumber(row.inward)}</td>
+                          <td className="px-2 py-2.5 text-right text-[11px] font-semibold text-red-600">-{formatNumber(row.outward)}</td>
+                          <td data-label="Transfer In" className="px-2 py-2.5 text-right text-[11px] font-semibold text-blue-700">{row.transferIn ? `+${formatNumber(row.transferIn)}` : "-"}</td>
+                          <td data-label="Transfer Out" className="px-2 py-2.5 text-right text-[11px] font-semibold text-purple-700">{row.transferOut ? `-${formatNumber(row.transferOut)}` : "-"}</td>
+                          <td className="px-2 py-2.5 text-right text-xs font-semibold tabular-nums text-gray-900">
                             {formatNumber(row.currentStock)}
                           </td>
                         </tr>
