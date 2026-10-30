@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import prisma from "../config/prisma.js";
 import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
 import { sanitizeCategory } from "./documentController.js";
@@ -54,10 +53,11 @@ function cleanReferences(list) {
   return out;
 }
 
-// Files go to storage first (in parallel), in transfers/<random id>/. Nothing is kept if one of them fails.
-async function storeTransferFiles(files, categories) {
+// Files go to the storage bucket (in parallel) in  transfer/<transfer number>/  e.g. transfer/TRF-0001/.
+// Nothing is kept if one of them fails.
+async function storeTransferFiles(files, categories, transferNumber) {
   if (!files.length) return { keys: [], documents: [] };
-  const folder = `transfers/${crypto.randomUUID()}/`;
+  const folder = `transfer/${transferNumber}/`;
   const stamp = Date.now();
   const prepared = files.map((file, index) => {
     const docCategory = sanitizeCategory(categories[index]);
@@ -272,17 +272,26 @@ export async function createTransfer(req, res) {
       wanted.set(k, entry);
     }
 
-    // Documents are stored first; the transfer and the document rows are then saved together in one transaction.
-    const stored = await storeTransferFiles(files, categories);
-    let created;
-    try {
-      created = await createWithNumber(req, {
-        fromCompany, toCompany, fromWarehouse, toWarehouse, remarks, wanted: [...wanted.values()],
-        referenceDocuments, documents: stored.documents,
-      });
-    } catch (error) {
-      await removeStoredFiles(stored.keys); // nothing was saved, so do not leave the files behind
-      throw error;
+    // The transfer is saved first (that gives it its number, e.g. TRF-0001); the files are then stored under
+    // transfer/<number>/. If storing the files fails, the transfer is removed again.
+    const created = await createWithNumber(req, {
+      fromCompany, toCompany, fromWarehouse, toWarehouse, remarks, wanted: [...wanted.values()], referenceDocuments,
+    });
+    if (files.length) {
+      let stored = { keys: [], documents: [] };
+      try {
+        stored = await storeTransferFiles(files, categories, created.transferNumber);
+        await prisma.document.createMany({
+          data: stored.documents.map((d) => ({
+            linkedType: "transfer", linkedId: created.id, docCategory: d.docCategory,
+            fileKey: d.fileKey, fileType: d.fileType, fileSize: d.fileSize, uploadedById: req.user.id,
+          })),
+        });
+      } catch (error) {
+        await removeStoredFiles(stored.keys);
+        await prisma.stockTransfer.delete({ where: { id: created.id } }).catch(() => {}); // items + serials go with it
+        throw error;
+      }
     }
 
     return res.status(201).json({ message: "Stock transferred", data: created });
@@ -291,7 +300,7 @@ export async function createTransfer(req, res) {
   }
 }
 
-async function createWithNumber(req, { fromCompany, toCompany, fromWarehouse, toWarehouse, remarks, wanted, referenceDocuments = [], documents = [] }) {
+async function createWithNumber(req, { fromCompany, toCompany, fromWarehouse, toWarehouse, remarks, wanted, referenceDocuments = [] }) {
   const MAX_ATTEMPTS = 10;
   let sequence = (await prisma.stockTransfer.count()) + 1;
 
@@ -377,14 +386,6 @@ async function createWithNumber(req, { fromCompany, toCompany, fromWarehouse, to
             select: { id: true, transferNumber: true },
           });
 
-          if (documents.length) {
-            await tx.document.createMany({
-              data: documents.map((d) => ({
-                linkedType: "transfer", linkedId: transfer.id, docCategory: d.docCategory,
-                fileKey: d.fileKey, fileType: d.fileType, fileSize: d.fileSize, uploadedById: req.user.id,
-              })),
-            });
-          }
           return transfer;
         },
         { maxWait: 10000, timeout: 30000 }
@@ -516,6 +517,40 @@ export async function getTransferById(req, res) {
     });
   } catch (error) {
     return fail(res, error, "Failed to load transfer");
+  }
+}
+
+// =====================================================
+// POST /api/transfers/:id/documents   (multipart: files + categories = JSON array, one name per file)
+// Adds more documents to a transfer that already exists. Super Admin / Account, within their own scope.
+// =====================================================
+export async function addTransferDocuments(req, res) {
+  let stored = { keys: [], documents: [] };
+  try {
+    if (!canMakeTransfer(req.user.role)) throw httpError(403, "Only the Account team or Super Admin can add documents");
+    const transfer = await prisma.stockTransfer.findFirst({
+      where: { AND: [{ id: req.params.id }, await scopeWhere(req.user)] },
+      select: { id: true, transferNumber: true },
+    });
+    if (!transfer) throw httpError(404, "Transfer not found");
+
+    let categories = [];
+    try { categories = JSON.parse(req.body?.categories || "[]"); } catch { throw httpError(422, "Invalid document data"); }
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!files.length) throw httpError(422, "Choose at least one file");
+    if (files.length !== categories.length) throw httpError(422, "Each document needs a name");
+
+    stored = await storeTransferFiles(files, categories, transfer.transferNumber);
+    await prisma.document.createMany({
+      data: stored.documents.map((d) => ({
+        linkedType: "transfer", linkedId: transfer.id, docCategory: d.docCategory,
+        fileKey: d.fileKey, fileType: d.fileType, fileSize: d.fileSize, uploadedById: req.user.id,
+      })),
+    });
+    return res.status(201).json({ message: "Documents uploaded" });
+  } catch (error) {
+    await removeStoredFiles(stored.keys);
+    return fail(res, error, "Failed to upload documents");
   }
 }
 

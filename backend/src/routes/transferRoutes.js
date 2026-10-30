@@ -7,6 +7,7 @@ import {
   createTransfer,
   listTransfers,
   getTransferById,
+  addTransferDocuments,
   downloadTransferDocument,
 } from "../controllers/transferController.js";
 
@@ -32,5 +33,6 @@ router.get("/:id", getTransferById);
 // Making a transfer: Account team and Super Admin (company / warehouse is checked in the controller).
 // Multipart (payload + categories + files) when documents are attached, plain JSON otherwise.
 router.post("/", authorize("SUPER_ADMIN", "ACCOUNT"), upload.array("files", 10), createTransfer);
+router.post("/:id/documents", authorize("SUPER_ADMIN", "ACCOUNT"), upload.array("files", 10), addTransferDocuments);
 
 export default router;

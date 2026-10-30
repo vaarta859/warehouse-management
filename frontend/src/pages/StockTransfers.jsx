@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Search, ArrowLeftRight, Download, Eye, FileText } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Search, ArrowLeftRight, Download, Eye, FileText, Upload } from "lucide-react";
 
-import { fetchTransfers, fetchTransferById, openTransferDocument } from "../features/transfer/transferApi";
+import { fetchTransfers, fetchTransferById, openTransferDocument, uploadTransferDocuments } from "../features/transfer/transferApi";
 import { toast } from "../components/CenterMessage";
 
 const formatNumber = (v) => Number(v || 0).toLocaleString("en-IN");
@@ -17,9 +17,46 @@ const inputCls =
 const openDocument = (documentId, mode) =>
   openTransferDocument(documentId, mode).catch((e) => toast.error(e.message || "Unable to open the document."));
 
-function TransferDetail({ id }) {
+const DOC_TYPES = ["E-way bill", "Invoice", "DC challan", "Bilty", "Other"];
+
+// Add more documents to a transfer that already exists.
+function DocumentUpload({ id, onUploaded }) {
+  const [docType, setDocType] = useState(DOC_TYPES[0]);
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const upload = async () => {
+    if (!file) return toast.error("Choose a file first.");
+    setBusy(true);
+    try {
+      await uploadTransferDocuments(id, [{ docCategory: docType, file }]);
+      toast.success("Document uploaded");
+      setFile(null);
+      onUploaded();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+      <select value={docType} onChange={(e) => setDocType(e.target.value)} className={`${inputCls} py-1.5`}>
+        {DOC_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+      <input key={file ? file.name : "none"} type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="min-w-0 max-w-[16rem] text-[11px] text-gray-600" />
+      <button type="button" disabled={busy || !file} onClick={upload} className="inline-flex items-center gap-1 rounded-md bg-[#185FA5] px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <Upload size={13} />{busy ? "Uploading..." : "Upload"}
+      </button>
+    </div>
+  );
+}
+
+function TransferDetail({ id, canUpload }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -27,7 +64,7 @@ function TransferDetail({ id }) {
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(e.message));
     return () => { alive = false; };
-  }, [id]);
+  }, [id, reload]);
 
   if (error) return <p className="px-5 py-4 text-xs font-medium text-red-600">{error}</p>;
   if (!detail) return <p className="px-5 py-4 text-xs text-gray-500">Loading...</p>;
@@ -40,6 +77,19 @@ function TransferDetail({ id }) {
 
   return (
     <div className="space-y-4 bg-gray-50 px-5 py-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-red-100 bg-white p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-red-700">From</p>
+          <p className="mt-1 text-xs font-semibold text-gray-900">{detail.fromCompanyName}</p>
+          <p className="text-xs text-gray-600">{detail.fromWarehouseName}</p>
+        </div>
+        <div className="rounded-lg border border-green-100 bg-white p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-green-700">To</p>
+          <p className="mt-1 text-xs font-semibold text-gray-900">{detail.toCompanyName}</p>
+          <p className="text-xs text-gray-600">{detail.toWarehouseName}</p>
+        </div>
+      </div>
+      <p className="text-xs text-gray-600"><span className="font-semibold text-gray-800">{detail.transferNumber}</span> · {formatDate(detail.createdAt)}</p>
       {detail.remarks && <p className="text-xs text-gray-700"><span className="font-semibold">Remarks:</span> {detail.remarks}</p>}
       {detail.items.map((item) => {
         const serials = serialsOf(item);
@@ -77,9 +127,10 @@ function TransferDetail({ id }) {
         </div>
       )}
 
-      {detail.documents?.length > 0 && (
+      {(detail.documents?.length > 0 || canUpload) && (
         <div className="rounded-lg border border-gray-200 bg-white p-3">
           <p className="mb-1.5 text-xs font-semibold text-gray-900">Documents</p>
+          {!detail.documents?.length && <p className="text-xs text-gray-500">No documents uploaded yet.</p>}
           <div className="space-y-1.5">
             {detail.documents.map((doc) => (
               <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2">
@@ -94,6 +145,7 @@ function TransferDetail({ id }) {
               </div>
             ))}
           </div>
+          {canUpload && <DocumentUpload id={id} onUploaded={() => setReload((n) => n + 1)} />}
         </div>
       )}
 
@@ -203,7 +255,7 @@ export default function StockTransfers() {
                     const open = openId === row.id;
                     const first = row.items[0];
                     return (
-                      <FragmentRow key={row.id} open={open} detailId={row.id}>
+                      <FragmentRow key={row.id} open={open} detailId={row.id} canUpload={canTransfer}>
                         <tr className="cursor-pointer border-t border-gray-100 hover:bg-gray-50" onClick={() => setOpenId(open ? null : row.id)}>
                           <td className="px-4 py-3.5 text-xs font-semibold text-gray-900">{row.transferNumber}</td>
                           <td className="px-4 py-3.5 text-xs text-gray-600">{formatDate(row.createdAt)}</td>
@@ -247,14 +299,14 @@ export default function StockTransfers() {
 }
 
 // A table row plus (when open) a full-width detail row under it.
-function FragmentRow({ open, detailId, children }) {
+function FragmentRow({ open, detailId, canUpload, children }) {
   return (
     <>
       {children}
       {open && (
         <tr>
           <td colSpan={7} className="p-0">
-            <TransferDetail id={detailId} />
+            <TransferDetail id={detailId} canUpload={canUpload} />
           </td>
         </tr>
       )}

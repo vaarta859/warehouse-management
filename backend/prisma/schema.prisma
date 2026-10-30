@@ -536,6 +536,8 @@ model StockTransfer {
   toWarehouseName   String
 
   remarks           String?
+  // E-way bill / invoice / challan numbers of the transfer: [{ refDocType, refDocNumber }]
+  referenceDocuments Json?
   createdById       String
   createdByName     String?
   createdAt         DateTime @default(now())
@@ -576,8 +578,6 @@ model StockTransferSerial {
   serialNo    String
   stockType   String
   source      String        @default("MANUAL")
-  
-  referenceDocuments Json?
 
   @@index([transferId])
   @@index([serialNo])

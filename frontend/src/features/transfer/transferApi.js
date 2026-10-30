@@ -57,6 +57,21 @@ export async function createTransfer(payload, files = []) {
   }
 }
 
+// Adds documents to an existing transfer. files = [{ docCategory, file }]
+export async function uploadTransferDocuments(id, files) {
+  try {
+    const formData = new FormData();
+    formData.append("categories", JSON.stringify(files.map((f) => f.docCategory)));
+    files.forEach((f) => formData.append("files", f.file));
+    await apiClient.post(`/api/transfers/${id}/documents`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 120000,
+    });
+  } catch (err) {
+    throw new Error(messageOf(err, "Failed to upload documents"));
+  }
+}
+
 export async function fetchTransfers(params) {
   try {
     const { data } = await apiClient.get("/api/transfers", { params });
