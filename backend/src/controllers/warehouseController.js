@@ -9,7 +9,7 @@ import {
   sharesCompany,
   setWarehouseCompanies,
 } from "../utils/warehouseCompanies.js";
-import { isFinanceSide, getUserCompanyIds } from "../utils/outwardWorkflow.js";
+import { isFinanceSide, getUserCompanyIds, getSalesGrantedWarehouseIds } from "../utils/outwardWorkflow.js";
 
 const WAREHOUSE_SELECT = {
   id: true,
@@ -81,6 +81,9 @@ export async function getAllWarehouses(req, res) {
       const companyIds = await getUserCompanyIds(req.user);
       where.AND.push(warehouseCompanyWhere(companyIds));
       if (req.query.companyId) where.AND.push(warehouseCompanyWhere([req.query.companyId]));
+      // A Sales / Account user with warehouse access sees only the warehouses granted to him (outward form dropdown too).
+      const granted = await getSalesGrantedWarehouseIds(req.user);
+      if (granted) where.AND.push({ id: { in: granted } });
     } else if (req.query.companyId) {
       where.AND.push(warehouseCompanyWhere([req.query.companyId]));
     }
@@ -132,6 +135,11 @@ export async function getWarehouseById(req, res) {
       if (!access || access.accessLevel !== "MANAGE") {
         return res.status(403).json({ message: "You don't have access to this warehouse" });
       }
+    }
+
+    const grantedSales = await getSalesGrantedWarehouseIds(req.user);
+    if (grantedSales && !grantedSales.includes(id)) {
+      return res.status(403).json({ message: "You don't have access to this warehouse" });
     }
 
     if (isFinanceSide(req.user.role) || req.user.role === "WAREHOUSE_MANAGER") {
@@ -396,7 +404,7 @@ export async function listWarehouseAccess(req, res) {
         canOutward: true,
         canManageDocuments: true,
         grantedAt: true,
-        user: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, email: true, role: true } },
       },
     });
 
@@ -450,13 +458,13 @@ export async function grantWarehouseAccess(req, res) {
         warehouseId,
         accessLevel: "MANAGE",
         canInward: Boolean(canInward),
-        canOutward: Boolean(canOutward),
+        canOutward: targetUser.role === "SALES" ? true : targetUser.role === "ACCOUNT" ? false : Boolean(canOutward),
         canManageDocuments: Boolean(canManageDocuments),
       },
       update: {
         accessLevel: "MANAGE",
         canInward: Boolean(canInward),
-        canOutward: Boolean(canOutward),
+        canOutward: targetUser.role === "SALES" ? true : targetUser.role === "ACCOUNT" ? false : Boolean(canOutward),
         canManageDocuments: Boolean(canManageDocuments),
       },
       select: {
@@ -465,7 +473,7 @@ export async function grantWarehouseAccess(req, res) {
         canOutward: true,
         canManageDocuments: true,
         grantedAt: true,
-        user: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, email: true, role: true } },
         warehouse: { select: { id: true, name: true, code: true } },
       },
     });

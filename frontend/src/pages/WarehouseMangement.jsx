@@ -58,6 +58,27 @@ const DEFAULT_PERMISSIONS = {
   canManageDocuments: true,
 };
 
+// Department shown for each company member.
+const DEPARTMENTS = {
+  SALES: "Sales",
+  ACCOUNT: "Account",
+  WAREHOUSE_MANAGER: "Warehouse",
+};
+const DEPARTMENT_ORDER = ["SALES", "ACCOUNT", "WAREHOUSE_MANAGER"];
+
+// Sales works on outward only; Account only approves; Warehouse gets all.
+const permissionsForRole = (role) => {
+  if (role === "SALES")
+    return { canInward: false, canOutward: true, canManageDocuments: false };
+  if (role === "ACCOUNT")
+    return { canInward: false, canOutward: false, canManageDocuments: false };
+  return DEFAULT_PERMISSIONS;
+};
+
+// Which permission checkboxes apply to a role.
+const editableKeysForRole = (role) =>
+  role === "SALES" || role === "ACCOUNT" ? [] : ["canInward", "canOutward", "canManageDocuments"];
+
 export default function WarehouseManagement() {
   const dispatch = useDispatch();
   const [params] = useSearchParams();
@@ -338,6 +359,7 @@ export default function WarehouseManagement() {
     const existing = access.find(
       (item) => item.user?.id === userId,
     );
+    const selectedUser = users.find((u) => u.id === userId);
 
     setPermissions(
       existing
@@ -347,9 +369,34 @@ export default function WarehouseManagement() {
             canManageDocuments:
               !!existing.canManageDocuments,
           }
-        : DEFAULT_PERMISSIONS,
+        : permissionsForRole(selectedUser?.role),
     );
   };
+
+  // Every member of the warehouse's companies, grouped by department.
+  const memberGroups = useMemo(() => {
+    if (!accessWarehouse) return [];
+    const warehouseCompanyIds = accessWarehouse.companyIds?.length
+      ? accessWarehouse.companyIds
+      : [accessWarehouse.companyId];
+
+    const members = users.filter(
+      (u) =>
+        DEPARTMENTS[u.role] &&
+        (u.companyIds?.length ? u.companyIds : [u.companyId]).some((id) =>
+          warehouseCompanyIds.includes(id),
+        ),
+    );
+
+    return DEPARTMENT_ORDER.map((role) => ({
+      role,
+      label: DEPARTMENTS[role],
+      members: members.filter((u) => u.role === role),
+    })).filter((g) => g.members.length);
+  }, [users, accessWarehouse]);
+
+  const grantUserRole = users.find((u) => u.id === grantUser)?.role;
+  const editableKeys = editableKeysForRole(grantUserRole);
 
   const grant = async (e) => {
     e.preventDefault();
@@ -868,29 +915,18 @@ export default function WarehouseManagement() {
                   Select company user
                 </option>
 
-                {users
-                  .filter(
-                    (u) =>
-                      (u.companyIds?.length
-                        ? u.companyIds
-                        : [u.companyId]
-                      ).some((id) =>
-                        (accessWarehouse.companyIds?.length
-                          ? accessWarehouse.companyIds
-                          : [accessWarehouse.companyId]
-                        ).includes(id),
-                      ) &&
-                      u.role ===
-                        "WAREHOUSE_MANAGER",
-                  )
-                  .map((u) => (
-                    <option
-                      key={u.id}
-                      value={u.id}
-                    >
-                      {u.name} • {u.email}
-                    </option>
-                  ))}
+                {memberGroups.map((group) => (
+                  <optgroup
+                    key={group.role}
+                    label={`${group.label} department`}
+                  >
+                    {group.members.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} • {u.email} • {group.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
 
               <div className="flex flex-wrap gap-4">
@@ -909,6 +945,7 @@ export default function WarehouseManagement() {
                     <input
                       type="checkbox"
                       checked={permissions[key]}
+                      disabled={!!grantUser && !editableKeys.includes(key)}
                       onChange={() =>
                         setPermissions(
                           (p) => ({
@@ -922,6 +959,14 @@ export default function WarehouseManagement() {
                   </label>
                 ))}
               </div>
+
+              {(grantUserRole === "SALES" || grantUserRole === "ACCOUNT") && (
+                <p className="text-xs text-gray-500">
+                  {grantUserRole === "SALES"
+                    ? "Sales members work on outward entries for this warehouse."
+                    : "Account members approve outward entries for this warehouse."}
+                </p>
+              )}
 
               <button
                 type="submit"
@@ -950,8 +995,13 @@ export default function WarehouseManagement() {
                       className="flex items-center justify-between gap-3 rounded-lg border p-3"
                     >
                       <div>
-                        <p className="text-sm font-medium text-gray-800">
+                        <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-800">
                           {item.user?.name}
+                          {DEPARTMENTS[item.user?.role] && (
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                              {DEPARTMENTS[item.user.role]}
+                            </span>
+                          )}
                         </p>
 
                         <p className="text-xs text-gray-500">

@@ -30,6 +30,7 @@ enum CostStatus {
   COMPLETED
   PARTIALLY_COMPLETED
   PENDING
+  ZERO_COST
 }
 
 // Serial number rule of a product (set when the category / model is added).

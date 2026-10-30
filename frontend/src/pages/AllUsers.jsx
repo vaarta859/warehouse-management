@@ -26,6 +26,12 @@ import {
 } from "../features/auth/authSlice";
 import { fetchCompanies, selectAllCompanies } from "../features/company/companySlice";
 import CompanyMultiSelect from "../components/CompanyMultiSelect";
+import {
+  fetchWarehouses,
+  selectWarehouses,
+  grantWarehouseAccess,
+  revokeWarehouseAccess,
+} from "../features/warehouse/warehouseSlice";
 
 // Every company a user belongs to. Falls back to the old single-company
 // fields for users loaded before multi-company support.
@@ -63,6 +69,9 @@ export default function AllUsers() {
   const error = useSelector(selectUsersError);
   const currentUser = useSelector((state) => state.auth.user);
   const companies = useSelector(selectAllCompanies);
+  const allWarehouses = useSelector(selectWarehouses);
+  // Warehouses a Sales user may use (empty = every warehouse of his companies).
+  const [salesWarehouseIds, setSalesWarehouseIds] = useState([]);
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -104,8 +113,20 @@ export default function AllUsers() {
     setRole(user.role || "");
     const ids = userCompanyIds(user);
     setCompanyIdsForRole(ids.length ? ids : companyId ? [companyId] : []);
+    setSalesWarehouseIds((user.warehouseAccess || []).map((a) => a.warehouseId));
+    if (currentUser?.role === "SUPER_ADMIN") dispatch(fetchWarehouses());
     setFormError("");
   };
+
+  // Warehouses of the companies picked in the form (a warehouse can be linked with several companies).
+  const warehousesOfSelectedCompanies = useMemo(
+    () =>
+      (allWarehouses || []).filter((w) => {
+        const ids = [w.companyId, w.company?.id, ...(w.companies || []).map((c) => c.id)].filter(Boolean);
+        return ids.some((id) => companyIdsForRole.includes(id));
+      }),
+    [allWarehouses, companyIdsForRole],
+  );
 
   // Active companies, plus any inactive company this user already belongs to,
   // so saving the form can't silently drop it.
@@ -155,6 +176,21 @@ export default function AllUsers() {
       );
       if (updateUserRole.rejected.match(roleResult))
         return setFormError(roleResult.payload || "Failed to update role");
+    }
+
+    // Sales: save the warehouses he can use (grant the new ones, revoke the removed ones).
+    if (["SALES", "ACCOUNT", "WAREHOUSE_MANAGER"].includes(role) && currentUser?.role === "SUPER_ADMIN") {
+      const before = (selected.warehouseAccess || []).map((a) => a.warehouseId);
+      const wanted = salesWarehouseIds.filter((id) => warehousesOfSelectedCompanies.some((w) => w.id === id));
+      for (const warehouseId of wanted.filter((id) => !before.includes(id))) {
+        const r = await dispatch(grantWarehouseAccess({ warehouseId, userId: selected.id, ...(role === "WAREHOUSE_MANAGER" ? { canInward: true, canOutward: true, canManageDocuments: true } : { canInward: false, canOutward: role === "SALES", canManageDocuments: false }) }));
+        if (grantWarehouseAccess.rejected.match(r)) return setFormError(r.payload || "Failed to grant warehouse access");
+      }
+      for (const warehouseId of before.filter((id) => !wanted.includes(id))) {
+        const r = await dispatch(revokeWarehouseAccess({ warehouseId, userId: selected.id }));
+        if (revokeWarehouseAccess.rejected.match(r)) return setFormError(r.payload || "Failed to remove warehouse access");
+      }
+      dispatch(getAllUsers({ companyId }));
     }
     close();
   };
@@ -481,6 +517,38 @@ export default function AllUsers() {
                     value={companyIdsForRole}
                     onChange={setCompanyIdsForRole}
                   />
+                )}
+                {["SALES", "ACCOUNT", "WAREHOUSE_MANAGER"].includes(role) && currentUser?.role === "SUPER_ADMIN" && (
+                  <div className="border-t pt-4">
+                    <h3 className="text-sm font-semibold text-gray-900">Warehouse access</h3>
+                    <p className="mt-0.5 mb-3 text-xs text-gray-500">
+                      {role === "WAREHOUSE_MANAGER"
+                        ? "Choose the company first, then tick the warehouses this manager can work in (inward, outward and documents)."
+                        : "This user works on outward entries only for the ticked warehouses. If none is ticked, all warehouses of the user's companies are available."}
+                    </p>
+                    {warehousesOfSelectedCompanies.length === 0 ? (
+                      <p className="text-xs text-gray-500">No warehouses found for the selected companies.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {warehousesOfSelectedCompanies.map((w) => (
+                          <label key={w.id} className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={salesWarehouseIds.includes(w.id)}
+                              onChange={() =>
+                                setSalesWarehouseIds((prev) =>
+                                  prev.includes(w.id) ? prev.filter((id) => id !== w.id) : [...prev, w.id],
+                                )
+                              }
+                            />
+                            <span className="text-sm font-medium text-gray-800">{w.name}</span>
+                            <span className="text-xs text-gray-500">{w.code} • {w.city}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
                 {formError && (
                   <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">

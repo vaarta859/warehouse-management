@@ -20,6 +20,7 @@ import { fetchCompanies, selectAllCompanies } from "../features/company/companyS
 import { fetchMe, selectCurrentUser } from "../features/auth/authSlice";
 import {
   COST_STATUS_OPTIONS,
+  paymentNeedsUtr,
   REQUIRED_DOCUMENTS,
   isPlaceholder,
   ACCOUNT_REF_TYPES,
@@ -572,9 +573,9 @@ export default function OutwardForm() {
 
     // Payment details are shared by all items.
     if (!payment.paymentStatus) return toast.error("Please select the payment status.");
-    if (payment.paymentStatus !== "COMPLETED" && !payment.approvedBy.trim()) return toast.error("Please enter Approve By.");
-    if (payment.paymentStatus !== "PENDING" && payment.utrNumber.trim() && !/^\d{12}$/.test(payment.utrNumber.trim())) return toast.error("UTR number must be exactly 12 digits.");
-    if (payment.paymentStatus !== "PENDING" && !payment.utrNumber.trim() && !payment.proof) {
+    if (payment.paymentStatus !== "COMPLETED" && payment.paymentStatus !== "ZERO_COST" && !payment.approvedBy.trim()) return toast.error("Please enter Approve By.");
+    if (paymentNeedsUtr(payment.paymentStatus) && payment.utrNumber.trim() && !/^\d{12}$/.test(payment.utrNumber.trim())) return toast.error("UTR number must be exactly 12 digits.");
+    if (paymentNeedsUtr(payment.paymentStatus) && !payment.utrNumber.trim() && !payment.proof) {
       // A proof saved earlier only covers items that already had one.
       const savedCovers = payment.keepProof && items.every((i) => originalItems.some((o) => o.id === i.serverId && o.hasProof));
       if (!savedCovers) return toast.error("Enter the UTR number or attach a payment proof (image / file).");
@@ -617,7 +618,7 @@ export default function OutwardForm() {
       billToEmail: billToEmail.trim() || undefined,
       dispatchRemarks: salesDispatchRemarks.trim() || undefined,
       items: items.map((i) => {
-        const paid = payment.paymentStatus !== "PENDING";
+        const paid = paymentNeedsUtr(payment.paymentStatus);
         return {
           serverId: i.serverId,
           category: i.category,
@@ -950,13 +951,13 @@ export default function OutwardForm() {
                 </div>
                 {payment.paymentStatus !== "COMPLETED" && (
                   <div>
-                    <label className={labelCls}>Approve By</label>
+                    <label className={labelCls}>Approve By{payment.paymentStatus === "ZERO_COST" ? " (optional)" : ""}</label>
                     <input value={payment.approvedBy} onChange={(e) => setPayment((p) => ({ ...p, approvedBy: e.target.value }))} placeholder="Enter approver name" className={inputCls} />
                   </div>
                 )}
               </div>
 
-              {payment.paymentStatus !== "PENDING" && (
+              {paymentNeedsUtr(payment.paymentStatus) && (
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className={labelCls}>UTR number</label>

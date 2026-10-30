@@ -266,7 +266,11 @@ export const COST_STATUS_OPTIONS = [
   { value: "COMPLETED", label: "Completed" },
   { value: "PARTIALLY_COMPLETED", label: "Partially completed" },
   { value: "PENDING", label: "Pending" },
+  { value: "ZERO_COST", label: "₹ 0" },
 ];
+
+// Only these statuses need a UTR number / payment proof.
+export const paymentNeedsUtr = (status) => status === "COMPLETED" || status === "PARTIALLY_COMPLETED";
 
 export const paymentStatusLabel = (value) =>
   COST_STATUS_OPTIONS.find((o) => o.value === value)?.label || "-";

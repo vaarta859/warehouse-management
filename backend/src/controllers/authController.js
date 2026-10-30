@@ -133,7 +133,7 @@ export async function signup(req, res) {
 
     let accessRows = [];
 
-    if (role === "WAREHOUSE_MANAGER" && Array.isArray(warehouseAccess)) {
+    if ((role === "WAREHOUSE_MANAGER" || role === "SALES" || role === "ACCOUNT") && Array.isArray(warehouseAccess)) {
       const warehouseIds = warehouseAccess
         .map((a) => a?.warehouseId)
         .filter(Boolean);
@@ -170,7 +170,8 @@ export async function signup(req, res) {
           warehouseId: a.warehouseId,
           accessLevel: "MANAGE",
           canInward: Boolean(a.canInward),
-          canOutward: Boolean(a.canOutward),
+          // A Sales user with access to a warehouse can always create outward entries for it.
+          canOutward: role === "SALES" ? true : role === "ACCOUNT" ? false : Boolean(a.canOutward),
           canManageDocuments: Boolean(a.canManageDocuments),
         }));
       }
@@ -518,7 +519,7 @@ export async function updateUserRole(req, res) {
       }
 
       // A manager can't keep access to a company they were removed from
-      if (role === "WAREHOUSE_MANAGER") {
+      if (role === "WAREHOUSE_MANAGER" || role === "SALES" || role === "ACCOUNT") {
         await tx.warehouseAccess.deleteMany({
           where: {
             userId: targetUser.id,

@@ -49,7 +49,8 @@ export default function Signup() {
     return ROLES;
   }, [isAddingForCompany]);
 
-  const wantsWarehouses = canLoadWarehouses && role === "WAREHOUSE_MANAGER";
+  const hasWarehouseAccessRole = role === "WAREHOUSE_MANAGER" || role === "SALES" || role === "ACCOUNT";
+  const wantsWarehouses = canLoadWarehouses && hasWarehouseAccessRole;
 
   useEffect(() => {
     // Super Admin uses the full company list; public signup uses the
@@ -99,7 +100,7 @@ export default function Signup() {
   };
 
   useEffect(() => {
-    if (role !== "WAREHOUSE_MANAGER") setWarehouseAccess({});
+    if (role !== "WAREHOUSE_MANAGER" && role !== "SALES" && role !== "ACCOUNT") setWarehouseAccess({});
   }, [role]);
 
   const toggleWarehouse = (id) => {
@@ -150,7 +151,7 @@ export default function Signup() {
       password,
       role,
       ...(role !== "SUPER_ADMIN" ? { companyIds } : {}),
-      ...(role === "WAREHOUSE_MANAGER" && access.length ? { warehouseAccess: access } : {}),
+      ...((role === "WAREHOUSE_MANAGER" || role === "SALES" || role === "ACCOUNT") && access.length ? { warehouseAccess: access } : {}),
     };
 
     // Admin-created users use a separate thunk which deliberately does not
@@ -223,9 +224,9 @@ export default function Signup() {
             />
           )}
 
-          {role === "WAREHOUSE_MANAGER" && (
+          {(role === "WAREHOUSE_MANAGER" || role === "SALES" || role === "ACCOUNT") && (
             <div className="border-t pt-5">
-              <div className="flex items-center justify-between mb-3"><div><h2 className="text-sm font-semibold text-gray-900">Warehouse access</h2><p className="text-xs text-gray-500 mt-0.5">Only warehouses granted here can be used by this manager.</p></div><span className="text-xs text-gray-400">Optional</span></div>
+              <div className="flex items-center justify-between mb-3"><div><h2 className="text-sm font-semibold text-gray-900">Warehouse access</h2><p className="text-xs text-gray-500 mt-0.5">{role === "SALES" || role === "ACCOUNT" ? "This user can see (and work on) outward entries only for the warehouses ticked here. If none is ticked, all warehouses of the selected companies are available." : "Only warehouses granted here can be used by this manager."}</p></div><span className="text-xs text-gray-400">Optional</span></div>
               {!canLoadWarehouses && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">For a public signup, an admin must grant warehouse access after the account is created.</div>}
               {canLoadWarehouses && companyIds.length === 0 && <p className="text-xs text-gray-500">Select a company above to see its warehouses.</p>}
               <div className="space-y-4">
@@ -238,7 +239,7 @@ export default function Signup() {
                         const selected = Boolean(warehouseAccess[warehouse.id]);
                         return <div key={warehouse.id} className="rounded-xl border border-gray-200 p-3">
                           <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={selected} onChange={() => toggleWarehouse(warehouse.id)} className="h-4 w-4" /><span className="text-sm font-medium text-gray-800">{warehouse.name}</span><span className="text-xs text-gray-500">{warehouse.code} • {warehouse.city}</span></label>
-                          {selected && <div className="mt-3 ml-7 flex flex-wrap gap-3">{[["canInward","Inward"],["canOutward","Outward"],["canManageDocuments","Documents"]].map(([key,label]) => <label key={key} className="inline-flex items-center gap-1.5 text-sm font-medium text-black"><input type="checkbox" checked={Boolean(warehouseAccess[warehouse.id]?.[key])} onChange={() => updatePermission(warehouse.id,key)} />{label}</label>)}</div>}
+                          {selected && role === "WAREHOUSE_MANAGER" && <div className="mt-3 ml-7 flex flex-wrap gap-3">{[["canInward","Inward"],["canOutward","Outward"],["canManageDocuments","Documents"]].map(([key,label]) => <label key={key} className="inline-flex items-center gap-1.5 text-sm font-medium text-black"><input type="checkbox" checked={Boolean(warehouseAccess[warehouse.id]?.[key])} onChange={() => updatePermission(warehouse.id,key)} />{label}</label>)}</div>}
                         </div>;
                       })}
                     </div>

@@ -80,7 +80,7 @@ export function downloadOutwardPdf(outward, items, documentRows, currentStatus, 
   }
 
   doc.subheading("Items");
-  const costLabel = { COMPLETED: "Completed", PARTIALLY_COMPLETED: "Partially completed", PENDING: "Pending" };
+  const costLabel = { COMPLETED: "Completed", PARTIALLY_COMPLETED: "Partially completed", PENDING: "Pending", ZERO_COST: "₹ 0" };
   doc.table({
     columns: includeCost
       ? [

@@ -554,7 +554,7 @@ export default function OutwardDetail() {
           // Payment is done once for the whole outward and saved on every item, so it is shown once here.
           const pay = items.find((i) => i.paymentStatus && (i.utrNumber || i.hasProof || i.approvedBy)) || items[0];
           const proofItem = items.find((i) => i.hasProof);
-          const badge = pay.paymentStatus === "COMPLETED" ? "bg-green-100 text-green-700" : pay.paymentStatus === "PARTIALLY_COMPLETED" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700";
+          const badge = pay.paymentStatus === "COMPLETED" ? "bg-green-100 text-green-700" : pay.paymentStatus === "PARTIALLY_COMPLETED" ? "bg-blue-100 text-blue-700" : pay.paymentStatus === "ZERO_COST" ? "bg-gray-100 text-gray-700" : "bg-amber-100 text-amber-700";
           return (
             <div className="bg-white rounded-xl border p-4 sm:p-6">
               <h2 className="text-base font-semibold text-gray-900 mb-4 sm:text-lg sm:mb-5">Payment details</h2>

@@ -61,6 +61,7 @@ import {
   transportLockReason,
   TRANSPORT_LOCK_MESSAGE,
   getManagerCompanyIds,
+  getSalesGrantedWarehouseIds,
 } from "../utils/outwardWorkflow.js";
 
 const DEFAULT_DOCUMENT_TYPES = ["Delivery challan", "Dispatch photo"];
@@ -94,7 +95,10 @@ async function getScopedWarehouseIds(req) {
   if (isFinanceSide(role)) {
     const companyIds = await getUserCompanyIds(req.user);
     if (!companyIds.length) return [];
-    return warehouseIdsForCompanies(companyIds);
+    const ids = await warehouseIdsForCompanies(companyIds);
+    // A Sales / Account user with warehouse access sees / uses only the warehouses granted to him.
+    const granted = await getSalesGrantedWarehouseIds(req.user);
+    return granted ? ids.filter((id) => granted.includes(id)) : ids;
   }
   return [];
 }
@@ -200,6 +204,11 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
   if (isFinanceSide(req.user.role)) {
     const companyIds = await getUserCompanyIds(req.user);
     if (!sharesCompany(warehouseCompanies, companyIds)) {
+      throw httpError(403, "You don't have access to this warehouse");
+    }
+    // A Sales / Account user with warehouse access can use only the warehouses granted to him.
+    const granted = await getSalesGrantedWarehouseIds(req.user);
+    if (granted && !granted.includes(warehouseId)) {
       throw httpError(403, "You don't have access to this warehouse");
     }
     if (permission === "canOutward" && req.user.role !== "SALES") {

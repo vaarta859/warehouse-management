@@ -71,7 +71,9 @@ export const isApprovedStatus = (status) => APPROVED_STATUSES.includes(status);
 // The entry belongs to a company (Min.companyId) instead of a warehouse (Min.warehouseId = null).
 // (direct entries are numbered MIN-<company code>-0001; no fixed code any more)
 
-export const PAYMENT_STATUSES = ["COMPLETED", "PARTIALLY_COMPLETED", "PENDING"];
+export const PAYMENT_STATUSES = ["COMPLETED", "PARTIALLY_COMPLETED", "PENDING", "ZERO_COST"];
+// Only these statuses carry a UTR number / payment proof.
+export const paymentNeedsUtr = (status) => status === "COMPLETED" || status === "PARTIALLY_COMPLETED";
 
 // Statuses the warehouse manager is allowed to see at all.
 // The warehouse manager sees an entry (items, ship to / bill to, customer) as soon as Sales creates it - it just can't
@@ -126,7 +128,21 @@ export async function getManagerCompanyIds(user) {
 export async function getFinanceWarehouseIds(user) {
   const companyIds = await getUserCompanyIds(user);
   if (!companyIds.length) return [];
-  return warehouseIdsForCompanies(companyIds);
+  const ids = await warehouseIdsForCompanies(companyIds);
+  // A Sales / Account user who was given warehouse access only gets those warehouses.
+  const granted = await getSalesGrantedWarehouseIds(user);
+  return granted ? ids.filter((id) => granted.includes(id)) : ids;
+}
+
+/**
+ * Warehouses granted to a SALES / ACCOUNT user in the access section (WarehouseAccess rows).
+ * Returns null when the user is not Sales / Account or has no grant at all - then the old rule applies
+ * (every warehouse of the user's companies), so existing users keep working.
+ */
+export async function getSalesGrantedWarehouseIds(user) {
+  if (user?.role !== "SALES" && user?.role !== "ACCOUNT") return null;
+  const rows = await prisma.warehouseAccess.findMany({ where: { userId: user.id }, select: { warehouseId: true } });
+  return rows.length ? rows.map((r) => r.warehouseId) : null;
 }
 
 /**
@@ -242,13 +258,13 @@ export function toPiColumns(data, previous) {
 /** Returns an error message, or null when the item's payment fields are valid. */
 export function validateItemPayment(item, label) {
   if (!PAYMENT_STATUSES.includes(item.paymentStatus)) {
-    return `${label}: payment status must be Completed, Partially Completed or Pending`;
+    return `${label}: payment status must be Completed, Partially Completed, Pending or ₹ 0`;
   }
-  // Approve By is needed while the payment is still Pending / Partially completed.
-  if (item.paymentStatus !== "COMPLETED" && !String(item.approvedBy || "").trim()) {
+  // Approve By is needed while the payment is Pending / Partially completed (optional for Completed and ₹ 0).
+  if (item.paymentStatus !== "COMPLETED" && item.paymentStatus !== "ZERO_COST" && !String(item.approvedBy || "").trim()) {
     return `${label}: Approve By is required when payment status is ${item.paymentStatus === "PENDING" ? "Pending" : "Partially Completed"}`;
   }
-  if (item.paymentStatus !== "PENDING") {
+  if (paymentNeedsUtr(item.paymentStatus)) {
     const utr = String(item.utrNumber || "").trim();
     if (utr && !UTR_RE.test(utr)) return `${label}: UTR number must be exactly 12 digits`;
     const hasUtr = Boolean(utr);
@@ -267,7 +283,7 @@ export function validateItemPayment(item, label) {
 
 /** Item row as stored in MinItem. `previous` = the row being replaced on edit (to keep its proof). */
 export function toItemRow(item, previous) {
-  const paid = item.paymentStatus !== "PENDING";
+  const paid = paymentNeedsUtr(item.paymentStatus);
   const keep = paid && item.keepProof === true && previous?.proofFileKey;
   return {
     category: item.category,
