@@ -6,6 +6,7 @@ import {
   getGrnById,
   createGrn,
   updateGrn,
+  deleteGrn,
   listInwardModels,
   createInwardModel,
   listInwardCompanies,
@@ -105,6 +106,14 @@ router.put(
   "/:id",
   authorize("SUPER_ADMIN", "WAREHOUSE_MANAGER"),
   updateGrn
+);
+
+// Super admin always; a warehouse manager only with "Delete inward" switched on for the entry's warehouse
+// (checked inside deleteGrn, which also refuses when the stock was already used).
+router.delete(
+  "/:id",
+  authorize("SUPER_ADMIN", "WAREHOUSE_MANAGER"),
+  deleteGrn
 );
 
 router.post(

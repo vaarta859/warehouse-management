@@ -14,7 +14,7 @@ const ROLES = [
   { value: "ACCOUNT", label: "Account" },
 ];
 
-const emptyAccess = () => ({ canInward: true, canOutward: true, canManageDocuments: true });
+const emptyAccess = () => ({ canInward: true, canOutward: true, canManageDocuments: true, canUpdateInward: false, canDeleteInward: false, canUpdateOutward: false, canDeleteOutward: false });
 
 export default function Signup() {
   const dispatch = useDispatch();
@@ -143,6 +143,10 @@ export default function Signup() {
       canInward: Boolean(permissions.canInward),
       canOutward: Boolean(permissions.canOutward),
       canManageDocuments: Boolean(permissions.canManageDocuments),
+      canUpdateInward: Boolean(permissions.canUpdateInward),
+      canDeleteInward: Boolean(permissions.canDeleteInward),
+      canUpdateOutward: Boolean(permissions.canUpdateOutward),
+      canDeleteOutward: Boolean(permissions.canDeleteOutward),
     }));
 
     const payload = {
@@ -239,7 +243,7 @@ export default function Signup() {
                         const selected = Boolean(warehouseAccess[warehouse.id]);
                         return <div key={warehouse.id} className="rounded-xl border border-gray-200 p-3">
                           <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={selected} onChange={() => toggleWarehouse(warehouse.id)} className="h-4 w-4" /><span className="text-sm font-medium text-gray-800">{warehouse.name}</span><span className="text-xs text-gray-500">{warehouse.code} • {warehouse.city}</span></label>
-                          {selected && role === "WAREHOUSE_MANAGER" && <div className="mt-3 ml-7 flex flex-wrap gap-3">{[["canInward","Inward"],["canOutward","Outward"],["canManageDocuments","Documents"]].map(([key,label]) => <label key={key} className="inline-flex items-center gap-1.5 text-sm font-medium text-black"><input type="checkbox" checked={Boolean(warehouseAccess[warehouse.id]?.[key])} onChange={() => updatePermission(warehouse.id,key)} />{label}</label>)}</div>}
+                          {selected && role === "WAREHOUSE_MANAGER" && <div className="mt-3 ml-7 flex flex-wrap gap-3">{[["canInward","Inward"],["canOutward","Outward"],["canManageDocuments","Documents"],["canUpdateInward","Update inward"],["canDeleteInward","Delete inward"],["canUpdateOutward","Update outward"],["canDeleteOutward","Delete outward"]].map(([key,label]) => <label key={key} className="inline-flex items-center gap-1.5 text-sm font-medium text-black"><input type="checkbox" checked={Boolean(warehouseAccess[warehouse.id]?.[key])} onChange={() => updatePermission(warehouse.id,key)} />{label}</label>)}</div>}
                         </div>;
                       })}
                     </div>

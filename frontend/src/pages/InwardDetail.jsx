@@ -18,11 +18,13 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { toast, promptName } from "../components/CenterMessage";
+import DeleteEntryModal from "../components/DeleteEntryModal";
 import {
   fetchInwardById,
   uploadInwardDocument,
   downloadInwardDocument,
   deleteInwardDocument,
+  deleteInwardEntry,
   clearCurrentInward,
   selectCurrentInward,
   selectInwardDetailStatus,
@@ -80,9 +82,16 @@ export default function InwardDetail() {
   const viewOnly = useSelector((state) => ["SALES", "ACCOUNT"].includes(state.auth.user?.role));
   // Only Super Admin can edit an inward entry; warehouse managers can still manage documents.
   const userRole = useSelector((state) => state.auth.user?.role);
-  const canUpdate = userRole === "SUPER_ADMIN";
+  // Update / Delete show for the Super admin always, and for a warehouse manager when the Super admin switched
+  // "Update inward" / "Delete inward" on for this entry's warehouse (the server sends the answer in `permissions`).
+  const isPartialEntry = String(inward?.entryStatus || "").toUpperCase() === "PARTIAL";
+  const canUpdate = userRole === "SUPER_ADMIN" || Boolean(inward?.permissions?.canUpdate) || (userRole === "WAREHOUSE_MANAGER" && isPartialEntry);
+  const canDelete = userRole === "SUPER_ADMIN" || Boolean(inward?.permissions?.canDelete);
+  const [showDeleteEntry, setShowDeleteEntry] = useState(false);
+  const [deletingEntry, setDeletingEntry] = useState(false);
   // A partial entry opens straight in the form for the warehouse team (no Update button); Sales / Account only view it.
-  const reopenPartial = userRole === "WAREHOUSE_MANAGER" && String(inward?.entryStatus || "").toUpperCase() === "PARTIAL";
+  // A manager who can delete / update entries stays on this page so the buttons are reachable.
+  const reopenPartial = userRole === "WAREHOUSE_MANAGER" && isPartialEntry && !inward?.permissions?.canDelete && !inward?.permissions?.canUpdate;
   useEffect(() => {
     if (reopenPartial && inward?.id) navigate(`/inward/${inward.id}/edit`, { replace: true });
   }, [reopenPartial, inward?.id]);
@@ -101,6 +110,20 @@ export default function InwardDetail() {
     if (id) dispatch(fetchInwardById(id));
     return () => dispatch(clearCurrentInward());
   }, [dispatch, id]);
+
+  const handleDeleteEntry = async () => {
+    setDeletingEntry(true);
+    const result = await dispatch(deleteInwardEntry(id));
+    setDeletingEntry(false);
+    if (deleteInwardEntry.fulfilled.match(result)) {
+      toast.success(result.payload?.message || "Inward entry deleted.");
+      setShowDeleteEntry(false);
+      navigate("/inward", { replace: true });
+    } else {
+      setShowDeleteEntry(false);
+      toast.error(result.payload || "Failed to delete inward entry.");
+    }
+  };
 
   const handleUpload = (event, docCategory) => {
     const file = event.target.files?.[0];
@@ -278,6 +301,9 @@ export default function InwardDetail() {
             <div className="flex flex-wrap items-center gap-2">
               {canUpdate && (
               <button type="button" onClick={() => navigate(`/inward/${id}/edit`)} className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-black sm:text-sm">Update</button>
+              )}
+              {canDelete && (
+              <button type="button" onClick={() => setShowDeleteEntry(true)} className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 sm:text-sm"><Trash2 size={15} /> Delete</button>
               )}
               <button type="button" onClick={() => downloadInwardPdf(inward, items, documents)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:text-sm"><Download size={15} /> Download</button>
             </div>
@@ -545,6 +571,15 @@ export default function InwardDetail() {
           </div>
         </div>
       </div>
+
+      <DeleteEntryModal
+        open={showDeleteEntry}
+        kind="inward"
+        number={inward.grnNumber}
+        deleting={deletingEntry}
+        onCancel={() => !deletingEntry && setShowDeleteEntry(false)}
+        onConfirm={handleDeleteEntry}
+      />
     </div>
   );
 }

@@ -118,6 +118,20 @@ export const updateInward = createAsyncThunk(
   }
 );
 
+// Super admin, or a warehouse manager with "Delete inward" on the warehouse: removes the entry with its
+// items, serial numbers and documents.
+export const deleteInwardEntry = createAsyncThunk(
+  "inward/deleteEntry",
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.delete(`/api/grn/${id}`);
+      return { id, message: data?.message };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || "Failed to delete inward entry");
+    }
+  }
+);
+
 export const createInward = createAsyncThunk(
   "inward/create",
   async (payload, { rejectWithValue }) => {
@@ -455,7 +469,7 @@ const inwardSlice = createSlice({
 
       // Anything saved / changed => the cached list is out of date.
       .addMatcher(
-        isAnyOf(createInward.fulfilled, updateInward.fulfilled, uploadInwardDocument.fulfilled, deleteInwardDocument.fulfilled, sessionChanged),
+        isAnyOf(createInward.fulfilled, updateInward.fulfilled, deleteInwardEntry.fulfilled, uploadInwardDocument.fulfilled, deleteInwardDocument.fulfilled, sessionChanged),
         (state) => { bumpVersion(state); }
       );
   },

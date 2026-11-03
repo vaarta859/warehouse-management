@@ -5,6 +5,7 @@ import {
   getOutwardById,
   createOutward,
   updateOutward,
+  deleteOutward,
   approveOutward,
   rejectOutward,
   holdOutward,
@@ -27,6 +28,7 @@ import {
 import { uploadOutwardDocument } from "../controllers/documentController.js";
 import authenticate from "../middleware/authenticate.js";
 import authorize from "../middleware/authorize.js";
+import loadEntryPermissions from "../middleware/loadEntryPermissions.js";
 import { upload } from "../middleware/uploadMiddleware.js";
 
 /**
@@ -47,6 +49,8 @@ import { upload } from "../middleware/uploadMiddleware.js";
  */
 const router = express.Router();
 router.use(authenticate);
+// Which warehouses this manager may update / delete outward entries on (empty for everyone else).
+router.use(loadEntryPermissions);
 
 router.get("/", listOutward);
 // KPI cards of the list page. Must stay above "/:id".
@@ -67,9 +71,13 @@ router.get("/history", listOutwardHistory);
 router.post("/", authorize("SUPER_ADMIN", "SALES"), createOutward);
 
 router.get("/:id", getOutwardById);
-router.put("/:id", authorize("SUPER_ADMIN", "SALES"), updateOutward);
+// Sales (until the entry locks) and the Super admin. A warehouse manager only with "Update outward" switched on
+// for the entry's warehouse - updateOutward checks that itself.
+router.put("/:id", authorize("SUPER_ADMIN", "SALES", "WAREHOUSE_MANAGER"), updateOutward);
 
-// Outward entries cannot be deleted by anyone (Super admin can update them at any time instead).
+// Super admin at any time; a warehouse manager only with "Delete outward" switched on for the entry's warehouse
+// (deleteOutward checks that itself). Removes the entry with its items, serials and every document / file.
+router.delete("/:id", authorize("SUPER_ADMIN", "WAREHOUSE_MANAGER", "SALES"), deleteOutward);
 
 // Account decision on the PI / payment details.
 router.post("/:id/approve", authorize("SUPER_ADMIN", "ACCOUNT"), approveOutward);

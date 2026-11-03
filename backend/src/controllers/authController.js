@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import prisma from "../config/prisma.js";
 import { signToken } from "../utils/jwt.js";
 import { invalidateCachedUser } from "../utils/userCache.js";
+import { entryPermissionsForRole } from "../utils/entryPermissions.js";
 import {
   USER_COMPANIES_SELECT,
   parseCompanyIds,
@@ -173,6 +174,7 @@ export async function signup(req, res) {
           // A Sales user with access to a warehouse can always create outward entries for it.
           canOutward: role === "SALES" ? true : role === "ACCOUNT" ? false : Boolean(a.canOutward),
           canManageDocuments: Boolean(a.canManageDocuments),
+          ...entryPermissionsForRole(role, a),
         }));
       }
     }
@@ -217,6 +219,10 @@ export async function signup(req, res) {
             canInward: true,
             canOutward: true,
             canManageDocuments: true,
+            canUpdateInward: true,
+            canDeleteInward: true,
+            canUpdateOutward: true,
+            canDeleteOutward: true,
           },
         },
       },
@@ -299,6 +305,10 @@ export async function login(req, res) {
             canInward: true,
             canOutward: true,
             canManageDocuments: true,
+            canUpdateInward: true,
+            canDeleteInward: true,
+            canUpdateOutward: true,
+            canDeleteOutward: true,
           },
         },
       },
@@ -559,6 +569,10 @@ export async function updateUserRole(req, res) {
               canInward: true,
               canOutward: true,
               canManageDocuments: true,
+              canUpdateInward: true,
+              canDeleteInward: true,
+              canUpdateOutward: true,
+              canDeleteOutward: true,
               warehouse: { select: { id: true, name: true, code: true } },
             },
           },
@@ -762,6 +776,10 @@ export async function listUsers(req, res) {
             canInward: true,
             canOutward: true,
             canManageDocuments: true,
+            canUpdateInward: true,
+            canDeleteInward: true,
+            canUpdateOutward: true,
+            canDeleteOutward: true,
             warehouse: {
               select: { id: true, name: true, code: true },
             },
@@ -816,6 +834,10 @@ export async function getUserWarehouses(req, res) {
         canInward: true,
         canOutward: true,
         canManageDocuments: true,
+        canUpdateInward: true,
+        canDeleteInward: true,
+        canUpdateOutward: true,
+        canDeleteOutward: true,
         grantedAt: true,
         warehouse: {
           select: {

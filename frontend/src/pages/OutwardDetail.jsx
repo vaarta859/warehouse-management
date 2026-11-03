@@ -14,6 +14,7 @@ import {
   Paperclip,
   Lock,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useNavigate, useParams } from "react-router-dom";
@@ -27,6 +28,7 @@ import {
   downloadItemProof,
   downloadPiFile,
   clearCurrentOutward,
+  deleteOutwardEntry,
   selectCurrentOutward,
   selectOutwardDetailStatus,
   selectOutwardDetailError,
@@ -57,6 +59,7 @@ import useProducts from "../features/product/useProducts";
 import { downloadOutwardPdf } from "../features/outward/outwardPdf";
 import OutwardDocuments from "../components/OutwardDocuments";
 import AccountOutwardPanel from "../components/AccountOutwardPanel";
+import DeleteEntryModal from "../components/DeleteEntryModal";
 
 import LocationLink from "../components/LocationLink";
 export default function OutwardDetail() {
@@ -100,6 +103,22 @@ export default function OutwardDetail() {
       navigate(`/outward/${id}/dispatch`, { replace: true });
     }
   }, [isSuperAdmin, detailStatus, outward, id, navigate]);
+
+  // Delete the whole entry (items, serials, documents). Super admin, or a warehouse manager with "Delete outward" on.
+  const [showDeleteEntry, setShowDeleteEntry] = useState(false);
+  const [deletingEntry, setDeletingEntry] = useState(false);
+  const handleDeleteEntry = async () => {
+    setDeletingEntry(true);
+    const result = await dispatch(deleteOutwardEntry(id));
+    setDeletingEntry(false);
+    setShowDeleteEntry(false);
+    if (deleteOutwardEntry.fulfilled.match(result)) {
+      toast.success(result.payload?.message || "Outward entry deleted.");
+      navigate("/outward", { replace: true });
+    } else {
+      toast.error(result.payload || "Failed to delete outward entry.");
+    }
+  };
 
   const openDecision = (type) => {
     setDecisionRemarks("");
@@ -217,7 +236,10 @@ export default function OutwardDetail() {
   // Once the transportation details are sent AND Account has uploaded its documents the entry is locked
   // (outward.editLocked, set by the server): Sales can't edit. Account can still approve / reject / hold until dispatch.
   const locked = Boolean(outward.editLocked) && !isSuperAdmin;
-  const canEdit = isSuperAdmin || (isSales && !locked && SALES_EDITABLE_STATUSES.includes(workflow));
+  // A warehouse manager the Super admin allowed to Update / Delete outward entries on this warehouse gets the same
+  // buttons (the server sends the answer in `permissions`, and enforces it again).
+  const canEdit = isSuperAdmin || Boolean(outward.permissions?.canUpdate) || (isSales && !locked && SALES_EDITABLE_STATUSES.includes(workflow));
+  const canDelete = isSuperAdmin || Boolean(outward.permissions?.canDelete);
   const canApprove = (isAccount || isSuperAdmin) && ["PENDING_APPROVAL", "REJECTED", "ON_HOLD"].includes(workflow);
   const canReject = (isAccount || isSuperAdmin) && REJECTABLE_STATUSES.includes(workflow);
   const canHold = (isAccount || isSuperAdmin) && HOLDABLE_STATUSES.includes(workflow);
@@ -328,6 +350,9 @@ export default function OutwardDetail() {
               )}
               {canEdit && (
                 <button type="button" onClick={() => navigate(`/outward/${id}/edit`)} className="flex items-center gap-1.5 rounded-lg bg-gray-900 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 font-semibold text-white hover:bg-black sm:text-sm">Update</button>
+              )}
+              {canDelete && (
+                <button type="button" onClick={() => setShowDeleteEntry(true)} className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 font-semibold text-red-600 hover:bg-red-50 sm:text-sm"><Trash2 size={15} /> Delete</button>
               )}
               {/* Download: only once the entry is fully dispatched, and only for the admin / warehouse manager. Sales and Account never get it. */}
               {dispatched && received && (isSuperAdmin || isWarehouse || isSales) && (
@@ -670,6 +695,15 @@ export default function OutwardDetail() {
           </div>
         </div>
       )}
+
+      <DeleteEntryModal
+        open={showDeleteEntry}
+        kind="outward"
+        number={outward.outwardNumber}
+        deleting={deletingEntry}
+        onCancel={() => !deletingEntry && setShowDeleteEntry(false)}
+        onConfirm={handleDeleteEntry}
+      />
     </div>
   );
 }

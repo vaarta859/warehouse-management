@@ -184,6 +184,11 @@ model WarehouseAccess {
   canInward          Boolean @default(false)
   canOutward         Boolean @default(false)
   canManageDocuments Boolean @default(false)
+  // Update / delete existing entries (warehouse managers: all four, Sales: the two outward ones)
+  canUpdateInward  Boolean @default(false)
+  canDeleteInward  Boolean @default(false)
+  canUpdateOutward Boolean @default(false)
+  canDeleteOutward Boolean @default(false)
 
   grantedAt DateTime @default(now())
 

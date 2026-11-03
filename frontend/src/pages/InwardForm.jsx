@@ -38,7 +38,7 @@ import ItemProductFields, { ItemProductNotice } from "../components/ItemProductF
 import PartyNameField from "../components/PartyNameField";
 import { formatInwardType } from "../features/inward/inwardHelpers";
 import useSerialScanner from "../components/SerialScanner";
-import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, partialSerialProblem, needsSerials, withSerialMode } from "../features/outward/serialHelpers";
+import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, serialKey, needsSerials, withSerialMode } from "../features/outward/serialHelpers";
 
 /*
  * Inward form:
@@ -213,6 +213,9 @@ export default function InwardForm() {
   const [savingPartial, setSavingPartial] = useState(false);
   // Status the opened entry had when loaded ("" for a new entry).
   const [loadedStatus, setLoadedStatus] = useState("");
+  // A warehouse manager the Super admin allowed to "Update inward" on this warehouse edits like the Super admin
+  // (completed entries too, items can be removed / reduced). The server tells us in `permissions.canUpdate`.
+  const [managerCanUpdate, setManagerCanUpdate] = useState(false);
   // Company the entry was saved with (matched by name once the company lists are loaded).
   const [pendingCompanyName, setPendingCompanyName] = useState("");
 
@@ -302,12 +305,13 @@ export default function InwardForm() {
       const x = result.payload;
       const status = String(x.entryStatus || "").toUpperCase() === "PARTIAL" ? "PARTIAL" : "COMPLETE";
       // A completed entry is changed by Super Admin only; the warehouse team reopens PARTIAL entries.
-      if (status === "COMPLETE" && user?.role !== "SUPER_ADMIN") {
-        toast.error("This inward entry is complete. Only Super Admin can change it.");
+      if (status === "COMPLETE" && user?.role !== "SUPER_ADMIN" && !x.permissions?.canUpdate) {
+        toast.error("This inward entry is complete. You don't have permission to change it.");
         navigate(`/inward/${editId}`, { replace: true });
         return;
       }
       setLoadedStatus(status);
+      setManagerCanUpdate(Boolean(x.permissions?.canUpdate));
       if (x.warehouse) {
         dispatch(setSelectedWarehouse(x.warehouse));
         // The entry stores the company NAME; match it to one of the warehouse's companies.
@@ -383,9 +387,10 @@ export default function InwardForm() {
   const isPartialMode = entryMode === "PARTIAL";
   // Items already saved on a partial entry are in stock: the warehouse team cannot delete or reduce them
   // (they can add items / raise quantities). Super Admin can do everything.
-  const isLocked = (item) => !isSuperAdmin && item.savedQty != null;
+  const hasFullEdit = isSuperAdmin || managerCanUpdate;
+  const isLocked = (item) => !hasFullEdit && item.savedQty != null;
   // Complete <-> Partial switch: new entries, partial entries, and Super Admin. Not for a warehouse user on a completed entry.
-  const canSwitchMode = isSuperAdmin || !isEdit || loadedStatus === "PARTIAL";
+  const canSwitchMode = hasFullEdit || !isEdit || loadedStatus === "PARTIAL";
   const anyDocUploading = Object.values(uploadingDocs || {}).some(Boolean);
 
   const updateReference = (id, field, value) => {
@@ -641,15 +646,15 @@ export default function InwardForm() {
         return;
       }
 
-      if (isLocked(item) && Number(item.quantity) < item.savedQty) {
-        toast.error(`"${item.sku}" is already saved in stock (${item.savedQty}). You can increase the quantity but not reduce it.`);
+      if (isLocked(item) && Number(item.quantity) !== item.savedQty) {
+        toast.error(`"${item.sku}" is already saved in stock. Saved items cannot be updated - you can only add new items.`);
         return;
       }
     }
 
-    // Every Pcs unit needs its own serial number (an item of 5 Pcs needs 5) when the entry is completed.
-    // A partial save only refuses duplicates / too many serials - the rest can follow later.
-    const serialError = partial ? partialSerialProblem(serialLines, serialValues) : serialProblem(serialLines, serialValues);
+    // Every Pcs unit needs its own serial number (an item of 5 Pcs needs 5) - also on a partial save,
+    // because a saved item cannot be edited later.
+    const serialError = serialProblem(serialLines, serialValues);
     if (serialError) {
       toast.error(serialError);
       return;
@@ -667,7 +672,7 @@ export default function InwardForm() {
       return;
     }
 
-    if (!permissions.canInward) {
+    if (!permissions.canInward && !(isEdit && managerCanUpdate)) {
       toast.error(
         "You do not have permission to create this inward entry in the selected warehouse."
       );
@@ -1079,7 +1084,7 @@ export default function InwardForm() {
             {isPartialMode && (
               <p className="-mt-2 mb-4 text-xs text-gray-500">
                 Partial: click Save to put the items entered so far into stock - the sales team can see them straight away, without Submit.
-                Submit is disabled until you switch to Complete. Saved items cannot be deleted or reduced, but you can add more items.
+                Submit is disabled until you switch to Complete. Saved items (and their serial numbers) cannot be changed - when you come back you can only add new items.
               </p>
             )}
 
@@ -1125,13 +1130,14 @@ export default function InwardForm() {
                       <label className={labelCls}>Quantity</label>
                       <input
                         type="number"
-                        min={isLocked(item) ? item.savedQty : 1}
+                        min={1}
                         value={item.quantity}
+                        disabled={isLocked(item)}
                         onChange={(e) =>
                           updateItem(item.id, "quantity", e.target.value)
                         }
                         placeholder="0"
-                        className={inputCls}
+                        className={`${inputCls} disabled:bg-gray-100 disabled:text-gray-500`}
                       />
                     </div>
 
@@ -1162,10 +1168,31 @@ export default function InwardForm() {
                   {needsSerials(serialItems[index]) && item.category && String(item.sku || "").trim() && (
                     <div className="mt-3 border-t border-gray-200 pt-3">
                       {Number(item.quantity) > 0 ? (
-                        <>
-                          {serial.inputCell(item, index, true)}
-                          <table className="w-full"><tbody>{serial.listRow(item, index, 1)}</tbody></table>
-                        </>
+                        isLocked(item) ? (
+                          <>
+                            {/* Saved item: its serial numbers are read-only. Only a missing serial (older partial save) can still be added. */}
+                            {(() => {
+                              const key = serialKey(item.category, item.sku);
+                              const offset = serialItems.slice(0, index).filter((o) => needsSerials(o) && serialKey(o.category, o.sku) === key).reduce((n, o) => n + (Number(o.quantity) || 0), 0);
+                              const slots = (serialValues[key] || []).slice(offset, offset + Number(item.quantity)).filter((x) => String(x.serialNo || "").trim());
+                              return (
+                                <>
+                                  {slots.length < Number(item.quantity) && serial.inputCell(item, index, true)}
+                                  <div className="flex flex-wrap items-center gap-2 pt-2">
+                                    {slots.map((x, i) => (
+                                      <span key={`${x.serialNo}-${i}`} className="inline-flex items-center rounded-md border border-gray-200 bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700">{x.serialNo}</span>
+                                    ))}
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </>
+                        ) : (
+                          <>
+                            {serial.inputCell(item, index, true)}
+                            <table className="w-full"><tbody>{serial.listRow(item, index, 1)}</tbody></table>
+                          </>
+                        )
                       ) : (
                         <p className="text-xs text-gray-400">Enter the quantity to add serial numbers.</p>
                       )}

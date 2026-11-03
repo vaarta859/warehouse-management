@@ -76,8 +76,15 @@ const httpError = (status, message) => Object.assign(new Error(message), { statu
 const PLACEHOLDER = "Pending";
 
 // What each role gets back for an entry.
+// A warehouse manager with "Update outward" on the entry's warehouse gets the full view (PI, payment, approval) -
+// that is what the edit form is made of. Everyone else on the warehouse side gets the trimmed view.
+const managerCanUpdate = (req, entry) =>
+  (req.user.role === "WAREHOUSE_MANAGER" || req.user.role === "SALES") && !entry?.directDispatch && Boolean(entry?.warehouseId) && Boolean(req.entryPerms?.updateOutward?.has(entry.warehouseId));
+const managerCanDelete = (req, entry) =>
+  (req.user.role === "WAREHOUSE_MANAGER" || req.user.role === "SALES") && !entry?.directDispatch && Boolean(entry?.warehouseId) && Boolean(req.entryPerms?.deleteOutward?.has(entry.warehouseId));
+
 const shapeFor = (req, entry) =>
-  req.user.role === "WAREHOUSE_MANAGER" ? sanitizeForWarehouse(entry) : shapeForFinance(entry);
+  req.user.role === "WAREHOUSE_MANAGER" && !managerCanUpdate(req, entry) ? sanitizeForWarehouse(entry) : shapeForFinance(entry);
 
 // ---------------------------------------------------------------------------
 // Scoping
@@ -196,7 +203,7 @@ async function assertWarehouseAccess(req, warehouseId, permission = "canOutward"
   if (!warehouse) throw httpError(404, "Warehouse not found");
   const warehouseCompanies = await getWarehouseCompanies(warehouseId);
   if (allCompaniesInactive(warehouseCompanies)) throw httpError(403, "This warehouse belongs to an inactive company.");
-  if (permission === "canOutward" && warehouse.Outward !== "Active") throw httpError(403, "Outward is disabled for this warehouse.");
+  if ((permission === "canOutward" || permission === "canUpdateOutward") && warehouse.Outward !== "Active") throw httpError(403, "Outward is disabled for this warehouse.");
 
   if (req.user.role === "SUPER_ADMIN") return warehouse;
 
@@ -299,12 +306,18 @@ function finishFor(req, entry, allDocs) {
   if (req.user.role === "ACCOUNT" && !docsVisible) docs = allDocs.filter((d) => isAccountDocCategory(d.docCategory));
   // Sales / Account / admin are told when the entry is locked (transportation sent + account documents uploaded),
   // so the screens can hide Edit / Reject / Hold. The server enforces it anyway.
-  const lockReason = req.user.role === "WAREHOUSE_MANAGER" ? null : editLockReason(entry, allDocs, entry.referenceDocuments || []);
+  const lockReason = req.user.role === "WAREHOUSE_MANAGER" && !managerCanUpdate(req, entry) ? null : editLockReason(entry, allDocs, entry.referenceDocuments || []);
   // Transportation details are frozen once Account has uploaded its documents - for every role (the manager too).
   const transportLocked = Boolean(transportLockReason(entry, allDocs, entry.referenceDocuments || []));
   // Status update for Account / Sales / admin: Account has created the invoice.
-  const invoiceCreated = req.user.role === "WAREHOUSE_MANAGER" ? undefined : hasInvoice(allDocs, entry.referenceDocuments || []);
-  return { ...shaped, workflowStatus, stage, invoiceCreated, editLocked: Boolean(lockReason), editLockReason: lockReason, transportLocked, ...documentStatus(docs), documents: docs };
+  const invoiceCreated = req.user.role === "WAREHOUSE_MANAGER" && !managerCanUpdate(req, entry) ? undefined : hasInvoice(allDocs, entry.referenceDocuments || []);
+  // What THIS user may do with the entry besides the normal workflow - the detail screen shows Update / Delete from it.
+  // (Super admin: always. Warehouse manager: only with the switch on for the entry's warehouse.)
+  const permissions = {
+    canUpdate: req.user.role === "SUPER_ADMIN" || managerCanUpdate(req, entry),
+    canDelete: req.user.role === "SUPER_ADMIN" || managerCanDelete(req, entry),
+  };
+  return { ...shaped, workflowStatus, stage, invoiceCreated, permissions, editLocked: Boolean(lockReason), editLockReason: lockReason, transportLocked, ...documentStatus(docs), documents: docs };
 }
 
 const plainItem = (i) => ({ category: i.category, sku: i.sku, companyName: i.companyName, quantity: i.quantity, uom: i.uom });
@@ -869,7 +882,17 @@ export async function updateOutward(req, res) {
     });
     if (!existing) return res.status(404).json({ message: "Outward entry not found" });
 
-    const isAdmin = req.user.role === "SUPER_ADMIN";
+    // Super admin, or a warehouse manager the Super admin allowed to update outward entries of this warehouse:
+    // not stopped by the Sales edit lock / status rules and may edit at any stage.
+    if (req.user.role === "WAREHOUSE_MANAGER" && existing.directDispatch) {
+      return res.status(403).json({ message: "Only Sales or the Super admin can edit this entry" });
+    }
+    const isAdmin = req.user.role === "SUPER_ADMIN" || managerCanUpdate(req, existing);
+    if (req.user.role === "WAREHOUSE_MANAGER" && !isAdmin) {
+      return res.status(403).json({ message: "You don't have permission to update outward entries on this warehouse" });
+    }
+    // A manager can only open entries the warehouse is meant to see (approved onwards).
+    if (req.user.role === "WAREHOUSE_MANAGER") await assertEntryVisible(req, existing);
     if (!isAdmin) {
       // Any Sales user of the same company can edit the team's entries (company access is enforced below by
       // assertWarehouseAccess). The lock / status rules still apply.
@@ -887,7 +910,7 @@ export async function updateOutward(req, res) {
       directCompany = await assertDirectCompany(req, data.companyId);
       data.companyName = directCompany.name;
     }
-    const warehouse = direct ? null : await assertWarehouseAccess(req, existing.warehouseId, "canOutward");
+    const warehouse = direct ? null : await assertWarehouseAccess(req, existing.warehouseId, req.user.role === "WAREHOUSE_MANAGER" ? "canUpdateOutward" : "canOutward");
     const proofProblem = proofKeyProblem(items, id, existing.outwardNumber, data.piFileKey);
     if (proofProblem) return res.status(422).json({ message: proofProblem });
     if (!direct) await assertCompanyForWarehouse(req, warehouse.id, data.companyId, true);
@@ -1796,20 +1819,30 @@ export async function saveAccountDocuments(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// DELETE  (Super admin only, and only after the entry has been dispatched)
-// Removes the entry, its items, reference documents and uploaded files.
-// Stock is calculated from the entries, so the quantities return to stock.
+// DELETE  /api/outward/:id
+// Super admin at any time; a warehouse manager only when the Super admin switched on "Delete outward" for the
+// entry's warehouse (and only for entries the warehouse can see).
+// Removes the WHOLE entry: items, serial numbers, reference documents, uploaded documents (rows AND files in
+// storage: payment proofs, PI, invoice, e-way bill, challan, receiving copy ...). Stock is calculated from the
+// entries, so the quantities return to stock.
 // ---------------------------------------------------------------------------
 export async function deleteOutward(req, res) {
   try {
     const { id } = req.params;
     const existing = await prisma.min.findUnique({
       where: { id },
-      select: { id: true, outwardNumber: true, warehouseId: true, status: true, piFileKey: true, items: { select: { proofFileKey: true } } },
+      select: { id: true, outwardNumber: true, warehouseId: true, directDispatch: true, companyId: true, status: true, piFileKey: true, items: { select: { proofFileKey: true } } },
     });
     if (!existing) return res.status(404).json({ message: "Outward entry not found" });
-    if (!isDispatchedStatus(existing.status)) {
-      return res.status(409).json({ message: "Only a dispatched outward entry can be deleted" });
+
+    if (req.user.role !== "SUPER_ADMIN") {
+      if (existing.directDispatch || !existing.warehouseId) {
+        return res.status(403).json({ message: "Only the Super admin can delete this entry" });
+      }
+      if (!managerCanDelete(req, existing)) {
+        return res.status(403).json({ message: "You don't have permission to delete outward entries on this warehouse" });
+      }
+      await assertEntryVisible(req, existing);
     }
 
     const documents = await prisma.document.findMany({ where: { linkedType: "outward", linkedId: id }, select: { id: true, fileKey: true } });
@@ -1821,6 +1854,7 @@ export async function deleteOutward(req, res) {
 
     await prisma.$transaction(async (tx) => {
       await tx.document.deleteMany({ where: { linkedType: "outward", linkedId: id } });
+      await tx.minSerial.deleteMany({ where: { minId: id } });
       await tx.min.update({ where: { id }, data: { items: { deleteMany: {} }, referenceDocuments: { deleteMany: {} } } });
       await tx.min.delete({ where: { id } });
     });
@@ -1830,7 +1864,7 @@ export async function deleteOutward(req, res) {
       action: "DELETED", description: `Outward entry ${existing.outwardNumber} deleted by ${req.user.name}`,
       userId: req.user.id, warehouseId: existing.warehouseId,
     });
-    return res.json({ message: "Outward entry deleted" });
+    return res.json({ message: `Outward entry ${existing.outwardNumber} deleted` });
   } catch (error) {
     console.error("Delete outward error:", error);
     return res.status(error.status || 500).json({ message: error.message || "Failed to delete outward entry" });
@@ -1916,6 +1950,21 @@ function historyDateFilter(from, to) {
   return Object.keys(range).length ? { createdAt: range } : {};
 }
 
+// Outward activity feed: every status line stays (created with N items, approved, on hold, rejected, resubmitted,
+// transportation submitted, account documents submitted, dispatched, delivered, ...). Left out: individual document
+// lines (uploaded / removed / invoice created), serial number and final quantity lines, and the field-level edit lines
+// (fields, items, PI, party, payment) when the Super admin made them - a non-admin's edits show.
+const HISTORY_HIDDEN_ACTIONS = ["DOCUMENT_ADDED", "DOCUMENT_REMOVED", "INVOICE_CREATED", "SERIALS_UPDATED", "FINAL_QTY_UPDATED"];
+const HISTORY_HIDDEN_TEXT = ["Outward entry saved with no field changes"];
+const HISTORY_EDIT_ACTIONS = ["UPDATED", "ITEM_ADDED", "ITEM_REMOVED", "ITEM_UPDATED", "PI_UPDATED", "PARTY_UPDATED", "PAYMENT_UPDATED", "COST_UPDATED"];
+const historyVisibleFilter = () => ({
+  NOT: [
+    { action: { in: HISTORY_HIDDEN_ACTIONS } },
+    ...HISTORY_HIDDEN_TEXT.map((prefix) => ({ description: { startsWith: prefix } })),
+    { action: { in: HISTORY_EDIT_ACTIONS }, user: { role: "SUPER_ADMIN" } },
+  ],
+});
+
 export async function listOutwardHistory(req, res) {
   try {
     const { warehouseId, search = "", page = "1", pageSize = "20", from, to } = req.query;
@@ -1953,6 +2002,7 @@ export async function listOutwardHistory(req, res) {
         warehouseId === "DIRECT" ? { entityId: { in: directIds } } : warehouseId ? { warehouseId } : {},
         entityFilter,
         isWarehouse ? { action: { notIn: HIDDEN_FROM_WAREHOUSE_ACTIONS } } : {},
+        historyVisibleFilter(),
         search ? { entityNumber: { contains: search, mode: "insensitive" } } : {},
         historyDateFilter(from, to),
       ],

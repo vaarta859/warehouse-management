@@ -2,7 +2,10 @@ import prisma from "../config/prisma.js";
 import { recordAuditLog, diffFields, diffItems, describeItem } from "../utils/auditLog.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
 import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
-import { getWarehouseCompanies, allCompaniesInactive } from "../utils/warehouseCompanies.js";
+import { getWarehouseCompanies, allCompaniesInactive, sharesCompany } from "../utils/warehouseCompanies.js";
+import { supabase, SUPABASE_BUCKET } from "../config/supabase.js";
+import { getWarehouseStock, stockKey } from "../utils/stock.js";
+import { getEntryPermissions } from "../utils/entryPermissions.js";
 
 // The company picked on the inward form must be one of the warehouse's linked
 // companies, still Active, and (unless Super Admin) one the user belongs to.
@@ -619,10 +622,17 @@ export async function getGrnById(req, res) {
     // RESPONSE
     // =====================================================
  
+    // What THIS user may do with the entry - the screen shows Update / Delete from it.
+    const entryPermissions = await getEntryPermissions(req.user, grn.warehouseId);
+
     return res.json({
       data: {
         ...grn,
         companyName: grn.companyName || grn.warehouse?.company?.name || "",
+        permissions: {
+          canUpdate: entryPermissions.canUpdateInward,
+          canDelete: entryPermissions.canDeleteInward,
+        },
         documents,
  
         status:
@@ -655,6 +665,104 @@ export async function getGrnById(req, res) {
   }
 }
  
+/**
+ * =========================================================
+ * DELETE /api/grn/:id
+ * =========================================================
+ *
+ * Super admin always; a warehouse manager only when the Super admin switched on "Delete inward" for the
+ * warehouse of the entry.
+ *
+ * Removes the WHOLE entry: items, serial numbers, reference documents, uploaded documents (rows AND files in
+ * storage) and the entry itself. Stock is calculated from the entries, so the received quantity leaves stock too.
+ *
+ * It is refused when that would make the stock negative - i.e. some of the received units have already been
+ * dispatched / transferred. The outward / transfer has to be dealt with first.
+ * =========================================================
+ */
+export async function deleteGrn(req, res) {
+  try {
+    const { id } = req.params;
+
+    const grn = await prisma.grn.findUnique({
+      where: { id },
+      select: {
+        id: true, grnNumber: true, warehouseId: true,
+        items: { select: { category: true, sku: true, quantity: true } },
+        serials: { select: { category: true, sku: true, serialNo: true } },
+      },
+    });
+    if (!grn) return res.status(404).json({ message: "GRN not found" });
+
+    // ---- who may delete ----
+    if (req.user.role !== "SUPER_ADMIN") {
+      const perms = await getEntryPermissions(req.user, grn.warehouseId);
+      if (!perms.canDeleteInward) {
+        return res.status(403).json({ message: "You don't have permission to delete inward entries on this warehouse." });
+      }
+      const warehouseCompanies = await getWarehouseCompanies(grn.warehouseId);
+      if (allCompaniesInactive(warehouseCompanies)) {
+        return res.status(403).json({ message: "This warehouse belongs to an inactive company." });
+      }
+      if (!sharesCompany(warehouseCompanies, await getUserCompanyIds(req.user))) {
+        return res.status(403).json({ message: "This warehouse is not linked with any of your companies." });
+      }
+    }
+
+    // ---- stock safety: what was received must still be there ----
+    const received = new Map();
+    for (const item of grn.items) {
+      const key = stockKey(item.category, item.sku);
+      received.set(key, (received.get(key) || 0) + (Number(item.quantity) || 0));
+    }
+    if (received.size) {
+      const stock = await getWarehouseStock(prisma, grn.warehouseId);
+      const blocked = [];
+      for (const [key, qty] of received) {
+        const available = stock.get(key)?.available ?? 0;
+        if (available - qty < 0) {
+          const sample = grn.items.find((i) => stockKey(i.category, i.sku) === key);
+          blocked.push(`"${sample.sku}" (${sample.category}): received ${qty}, only ${Math.max(available, 0)} still in stock`);
+        }
+      }
+      if (blocked.length) {
+        return res.status(409).json({
+          message: `This inward entry cannot be deleted because some of its stock has already been used - ${blocked.join("; ")}. Remove the outward / transfer entries that used it first.`,
+        });
+      }
+    }
+
+    // ---- files in storage first, so a storage failure leaves everything untouched ----
+    const documents = await prisma.document.findMany({
+      where: { linkedType: "grn", linkedId: id },
+      select: { id: true, fileKey: true },
+    });
+    const fileKeys = documents.map((d) => d.fileKey).filter(Boolean);
+    if (fileKeys.length) {
+      const { error } = await supabase.storage.from(SUPABASE_BUCKET).remove(fileKeys);
+      if (error) return res.status(500).json({ message: "Failed to delete files from storage.", error: error.message });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.document.deleteMany({ where: { linkedType: "grn", linkedId: id } });
+      await tx.grnSerial.deleteMany({ where: { grnId: id } });
+      await tx.grn.update({ where: { id }, data: { items: { deleteMany: {} }, referenceDocuments: { deleteMany: {} } } });
+      await tx.grn.delete({ where: { id } });
+    });
+
+    await recordAuditLog(prisma, {
+      entityType: "INWARD", entityId: id, entityNumber: grn.grnNumber,
+      action: "DELETED", description: `Inward entry ${grn.grnNumber} deleted by ${req.user.name}`,
+      userId: req.user.id, warehouseId: grn.warehouseId,
+    }).catch((err) => console.error("Audit log (inward DELETED) failed:", err));
+
+    return res.json({ message: `Inward entry ${grn.grnNumber} deleted` });
+  } catch (error) {
+    console.error("Delete GRN error:", error);
+    return res.status(error.status || 500).json({ message: error.message || "Failed to delete inward entry" });
+  }
+}
+
 /**
  * =========================================================
  * POST /api/grn
@@ -702,13 +810,17 @@ export async function updateGrn(req, res) {
     if (allCompaniesInactive(warehouseCompanies) || warehouse.Inward !== "Active") {
       return res.status(403).json({ message: "Inward is disabled for this warehouse/company." });
     }
+    // Super admin always has full edit. A warehouse manager has it only when the Super admin switched on
+    // "Update inward" for this warehouse; with just the plain Inward right they can still finish a PARTIAL entry.
+    let fullEdit = req.user.role === "SUPER_ADMIN";
     if (req.user.role === "WAREHOUSE_MANAGER") {
       const access = await prisma.warehouseAccess.findUnique({
         where: { userId_warehouseId: { userId: req.user.id, warehouseId: existing.warehouseId } },
       });
-      if (!access || access.accessLevel !== "MANAGE" || !access.canInward) {
+      if (!access || access.accessLevel !== "MANAGE" || !(access.canInward || access.canUpdateInward)) {
         return res.status(403).json({ message: "You don't have permission to update this inward entry." });
       }
+      fullEdit = Boolean(access.canUpdateInward);
     }
  
     if (!data.inwardType || !data.supplierName?.trim() || !data.companyName?.trim()) {
@@ -716,8 +828,8 @@ export async function updateGrn(req, res) {
     }
     // Only a PARTIAL entry stays open for the warehouse team; a completed one is changed by Super Admin only.
     const wasPartial = normalizeEntryStatus(existing.entryStatus) === ENTRY_STATUS.PARTIAL;
-    if (req.user.role !== "SUPER_ADMIN" && !wasPartial) {
-      return res.status(403).json({ message: "This inward entry is complete. Only Super Admin can change it." });
+    if (!fullEdit && !wasPartial) {
+      return res.status(403).json({ message: "This inward entry is complete. You don't have permission to change it." });
     }
     // Not sent = keep what the entry already is.
     const entryStatus = normalizeEntryStatus(data.entryStatus, normalizeEntryStatus(existing.entryStatus));
@@ -761,17 +873,27 @@ export async function updateGrn(req, res) {
       quantity: Number(item.quantity), uom: item.uom,
       companyName: item.companyName ? String(item.companyName).trim() || null : null,
     }));
-    // Items already saved on a partial entry are in stock (Sales may be using them): the warehouse team can add
-    // items or raise quantities, but not delete an item or lower its quantity. Super Admin can do everything.
-    if (wasPartial && req.user.role !== "SUPER_ADMIN") {
-      const keyOf = (i) => `${String(i.category || "").trim().toLowerCase()}::${String(i.sku || "").trim().toLowerCase()}`;
-      const sum = (list) => list.reduce((m, i) => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (Number(i.quantity) || 0)), new Map());
-      const before = sum(existing.items);
-      const after = sum(newItems);
-      for (const [key, qty] of before) {
-        if ((after.get(key) || 0) < qty) {
-          const sample = existing.items.find((i) => keyOf(i) === key);
-          return res.status(403).json({ message: `"${sample.sku}" is already saved in stock on this partial entry - it cannot be removed or reduced. You can add more items or increase the quantity.` });
+    // Items already saved on a partial entry are in stock (Sales may be using them): the warehouse team cannot
+    // change or delete them - they can only ADD new items (with their serial numbers). Super Admin can do everything.
+    if (wasPartial && !fullEdit) {
+      const norm = (v) => String(v || "").trim().toLowerCase();
+      const keyOf = (i) => `${norm(i.category)}::${norm(i.sku)}`;
+      const rowOf = (i) => `${keyOf(i)}::${Number(i.quantity)}::${norm(i.uom)}::${norm(i.companyName)}`;
+      const remaining = newItems.map(rowOf);
+      for (const saved of existing.items) {
+        const at = remaining.indexOf(rowOf(saved));
+        if (at === -1) {
+          return res.status(403).json({ message: `"${saved.sku}" is already saved in stock on this partial entry - saved items cannot be changed or removed. You can only add new items.` });
+        }
+        remaining.splice(at, 1);
+      }
+      // Serial numbers already saved stay as they are.
+      if (Array.isArray(data.serials)) {
+        const sent = new Set(cleanSerials(data.serials).map((s) => `${keyOf(s)}::${norm(s.serialNo)}`));
+        const savedSerials = await prisma.grnSerial.findMany({ where: { grnId: id }, select: { category: true, sku: true, serialNo: true } });
+        const missing = savedSerials.find((s) => !sent.has(`${keyOf(s)}::${norm(s.serialNo)}`));
+        if (missing) {
+          return res.status(403).json({ message: `Serial number "${missing.serialNo}" is already saved on this partial entry and cannot be removed or changed.` });
         }
       }
     }
@@ -784,7 +906,7 @@ export async function updateGrn(req, res) {
     // Same rule as when creating: a Required item must have all its serial numbers, also when updating.
     // (Not sent = the form did not include them, which only passes when no item needs serial numbers.)
     {
-      const serialProblem = validateInwardSerials(serialItems, serialsProvided ? serials : [], { partial: isPartial });
+      const serialProblem = validateInwardSerials(serialItems, serialsProvided ? serials : []);
       if (serialProblem) return res.status(422).json({ message: serialProblem });
       // A serial that is already in stock (not dispatched since it came in) cannot be received again.
       if (serialsProvided) {
@@ -1100,7 +1222,7 @@ export async function createGrn(req, res) {
  
     // Serial numbers: one for every Pcs unit (an item of 5 Pcs needs 5).
     const serials = cleanSerials(data.serials);
-    const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials, { partial: isPartial });
+    const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials);
     if (serialProblem) return res.status(422).json({ message: serialProblem });
     // A serial that is already in stock (not dispatched since it came in) cannot be received again.
     const inStockProblem = await findInwardSerialProblem(prisma, { serials });

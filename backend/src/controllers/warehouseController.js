@@ -9,6 +9,7 @@ import {
   sharesCompany,
   setWarehouseCompanies,
 } from "../utils/warehouseCompanies.js";
+import { entryPermissionsForRole, ENTRY_PERMISSION_SELECT } from "../utils/entryPermissions.js";
 import { isFinanceSide, getUserCompanyIds, getSalesGrantedWarehouseIds } from "../utils/outwardWorkflow.js";
 
 const WAREHOUSE_SELECT = {
@@ -403,6 +404,7 @@ export async function listWarehouseAccess(req, res) {
         canInward: true,
         canOutward: true,
         canManageDocuments: true,
+        ...ENTRY_PERMISSION_SELECT,
         grantedAt: true,
         user: { select: { id: true, name: true, email: true, role: true } },
       },
@@ -428,6 +430,8 @@ export async function grantWarehouseAccess(req, res) {
   try {
     const { id: warehouseId } = req.params;
     const { userId, canInward, canOutward, canManageDocuments } = req.body;
+    // Update / delete rights: managers get all four, Sales only the outward ones.
+    const entryPermissions = (role) => entryPermissionsForRole(role, req.body);
 
     if (!userId) {
       return res.status(400).json({ message: "userId is required" });
@@ -460,18 +464,23 @@ export async function grantWarehouseAccess(req, res) {
         canInward: Boolean(canInward),
         canOutward: targetUser.role === "SALES" ? true : targetUser.role === "ACCOUNT" ? false : Boolean(canOutward),
         canManageDocuments: Boolean(canManageDocuments),
+        ...entryPermissions(targetUser.role),
       },
       update: {
         accessLevel: "MANAGE",
         canInward: Boolean(canInward),
         canOutward: targetUser.role === "SALES" ? true : targetUser.role === "ACCOUNT" ? false : Boolean(canOutward),
         canManageDocuments: Boolean(canManageDocuments),
+        // On an update only the flags that were actually sent change, so an older screen that doesn't know
+        // about them can't switch them off by accident.
+        ...Object.fromEntries(Object.entries(entryPermissions(targetUser.role)).filter(([key]) => req.body[key] !== undefined || targetUser.role === "ACCOUNT")),
       },
       select: {
         accessLevel: true,
         canInward: true,
         canOutward: true,
         canManageDocuments: true,
+        ...ENTRY_PERMISSION_SELECT,
         grantedAt: true,
         user: { select: { id: true, name: true, email: true, role: true } },
         warehouse: { select: { id: true, name: true, code: true } },

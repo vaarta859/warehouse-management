@@ -130,13 +130,17 @@ export const fetchWarehouseAccess = createAsyncThunk(
 
 export const grantWarehouseAccess = createAsyncThunk(
   "warehouse/grantAccess",
-  async ({ warehouseId, userId, canInward, canOutward, canManageDocuments }, { rejectWithValue }) => {
+  async ({ warehouseId, userId, canInward, canOutward, canManageDocuments, canUpdateInward, canDeleteInward, canUpdateOutward, canDeleteOutward }, { rejectWithValue }) => {
     try {
       const { data } = await apiClient.put(`${API_URL}/${warehouseId}/access`, {
         userId,
         canInward,
         canOutward,
         canManageDocuments,
+        canUpdateInward,
+        canDeleteInward,
+        canUpdateOutward,
+        canDeleteOutward,
       });
       return { warehouseId, access: data.access };
     } catch (error) {

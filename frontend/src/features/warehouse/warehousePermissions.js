@@ -35,6 +35,11 @@ export const getWarehousePermissions = (user, warehouseOrId) => {
       canInward: companyActive && (!warehouse || inwardActive),
       canOutward: companyActive && (!warehouse || outwardActive),
       canManageDocuments: companyActive,
+      // The Super admin can always edit and delete entries.
+      canUpdateInward: true,
+      canDeleteInward: true,
+      canUpdateOutward: true,
+      canDeleteOutward: true,
     };
   }
 
@@ -45,11 +50,15 @@ export const getWarehousePermissions = (user, warehouseOrId) => {
       canInward: false,
       canOutward: companyActive && (!warehouse || outwardActive),
       canManageDocuments: false,
+      canUpdateInward: false,
+      canDeleteInward: false,
+      canUpdateOutward: false,
+      canDeleteOutward: false,
     };
   }
 
   if (user?.role !== "WAREHOUSE_MANAGER" || !warehouseId) {
-    return { canInward: false, canOutward: false, canManageDocuments: false };
+    return { canInward: false, canOutward: false, canManageDocuments: false, canUpdateInward: false, canDeleteInward: false, canUpdateOutward: false, canDeleteOutward: false };
   }
 
   const accessList = Array.isArray(user?.warehouseAccess)
@@ -64,6 +73,11 @@ export const getWarehousePermissions = (user, warehouseOrId) => {
     canInward: companyActive && inwardActive && Boolean(access?.canInward),
     canOutward: companyActive && outwardActive && Boolean(access?.canOutward),
     canManageDocuments: companyActive && Boolean(access?.canManageDocuments),
+    // Update / delete of existing entries: the grant itself decides (the detail page also gets the answer from the server).
+    canUpdateInward: companyActive && Boolean(access?.canUpdateInward),
+    canDeleteInward: companyActive && Boolean(access?.canDeleteInward),
+    canUpdateOutward: companyActive && Boolean(access?.canUpdateOutward),
+    canDeleteOutward: companyActive && Boolean(access?.canDeleteOutward),
   };
 };
 

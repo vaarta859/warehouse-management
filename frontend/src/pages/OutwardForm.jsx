@@ -169,6 +169,9 @@ export default function OutwardForm() {
   const [loadingEntry, setLoadingEntry] = useState(isEdit);
   // Workflow status of the entry being edited (approved entries can still be edited before dispatch).
   const [entryStatus, setEntryStatus] = useState(null);
+  // A warehouse manager the Super admin allowed to "Update outward" on this warehouse may edit the entry at any stage
+  // (the server tells us in `permissions.canUpdate`). Company change and the dispatch section stay Super-admin-only.
+  const [managerCanUpdate, setManagerCanUpdate] = useState(false);
   const alreadyApproved = isEdit && ["PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"].includes(entryStatus);
 
   // Before dispatch the form only holds the sales information (customer, PI details, items, payment status); after
@@ -322,7 +325,8 @@ export default function OutwardForm() {
       }
       const x = result.payload;
       // Editable until the transportation details are sent AND Account has uploaded documents (x.editLocked, from the server).
-      if (!isSuperAdmin && (x.editLocked || !["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"].includes(x.workflowStatus))) {
+      setManagerCanUpdate(Boolean(x.permissions?.canUpdate));
+      if (!isSuperAdmin && !x.permissions?.canUpdate && (x.editLocked || !["PENDING_APPROVAL", "REJECTED", "ON_HOLD", "PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"].includes(x.workflowStatus))) {
         toast.error(x.editLockReason || "This entry can no longer be edited.");
         navigate(`/outward/${editId}`, { replace: true });
         return;
@@ -548,7 +552,7 @@ export default function OutwardForm() {
     e.preventDefault();
     if (!selectedCompanyId) return toast.error("Please select a company.");
     if (!warehouseId && !dispatchDirectly) return toast.error("Please select a warehouse or Dispatch directly.");
-    if (!dispatchDirectly && (operationBlocked || !permissions.canOutward)) return toast.error("Outward is not available for this warehouse.");
+    if (!dispatchDirectly && (operationBlocked || !(permissions.canOutward || (isEdit && managerCanUpdate)))) return toast.error("Outward is not available for this warehouse.");
     if (!customerName.trim()) return toast.error("Please enter customer name.");
     if (!companyName.trim()) return toast.error("Company name is missing.");
     if (piAmount !== "" && (!Number.isFinite(Number(piAmount)) || Number(piAmount) < 0)) return toast.error("Please enter a valid PI amount.");

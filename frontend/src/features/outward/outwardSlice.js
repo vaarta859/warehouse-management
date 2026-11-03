@@ -352,7 +352,8 @@ export const saveAccountDocuments = createAsyncThunk(
   }
 );
 
-// Super admin only: deletes a dispatched outward entry.
+// Super admin, or a warehouse manager with "Delete outward" on the warehouse: removes the entry with its items,
+// serial numbers and every document.
 export const deleteOutwardEntry = createAsyncThunk(
   "outward/deleteEntry",
   async (id, { rejectWithValue }) => {

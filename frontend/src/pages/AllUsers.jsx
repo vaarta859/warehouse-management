@@ -606,6 +606,10 @@ export default function AllUsers() {
                           {access.canManageDocuments && (
                             <Badge>Documents</Badge>
                           )}
+                          {access.canUpdateInward && <Badge>Update inward</Badge>}
+                          {access.canDeleteInward && <Badge>Delete inward</Badge>}
+                          {access.canUpdateOutward && <Badge>Update outward</Badge>}
+                          {access.canDeleteOutward && <Badge>Delete outward</Badge>}
                         </div>
                       </div>
                     ))}

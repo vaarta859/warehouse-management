@@ -17,6 +17,10 @@ export const signupSchema = z.object({
         canInward: z.boolean().optional(),
         canOutward: z.boolean().optional(),
         canManageDocuments: z.boolean().optional(),
+        canUpdateInward: z.boolean().optional(),
+        canDeleteInward: z.boolean().optional(),
+        canUpdateOutward: z.boolean().optional(),
+        canDeleteOutward: z.boolean().optional(),
       })
     )
     .optional(),

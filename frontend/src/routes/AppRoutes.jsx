@@ -102,7 +102,8 @@ const router = createBrowserRouter([
 
   // Sales fills customer + item + cost details (and edits them until Account approves).
   { path: "/outward/create", element: fullScreen(<OutwardForm />, SALES_ROLES) },
-  { path: "/outward/:id/edit", element: fullScreen(<OutwardForm />, SALES_ROLES) },
+  // A warehouse manager reaches the edit form only with "Update outward" switched on (the form + server check it).
+  { path: "/outward/:id/edit", element: fullScreen(<OutwardForm />, [...SALES_ROLES, "WAREHOUSE_MANAGER"]) },
   // Warehouse manager: transportation form first (after Account's approval), then the dispatch form once Account shares the documents.
   { path: "/outward/:id/transportation", element: fullScreen(<OutwardTransportation />, DISPATCH_ROLES) },
   { path: "/outward/:id/dispatch", element: fullScreen(<OutwardDispatch />, DISPATCH_ROLES) },

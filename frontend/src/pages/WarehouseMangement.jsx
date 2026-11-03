@@ -52,10 +52,22 @@ const EMPTY = {
 
 const pincodeRegex = /^\d{6}$/;
 
+// Update / delete rights on inward + outward ENTRIES. Off by default - a Super admin switches them on per user.
+// (The Super admin can always create, update and delete without any of these.)
+const ENTRY_RIGHT_KEYS = ["canUpdateInward", "canDeleteInward", "canUpdateOutward", "canDeleteOutward"];
+const NO_ENTRY_RIGHTS = { canUpdateInward: false, canDeleteInward: false, canUpdateOutward: false, canDeleteOutward: false };
+const ENTRY_RIGHT_LABELS = [
+  ["canUpdateInward", "Update inward"],
+  ["canDeleteInward", "Delete inward"],
+  ["canUpdateOutward", "Update outward"],
+  ["canDeleteOutward", "Delete outward"],
+];
+
 const DEFAULT_PERMISSIONS = {
   canInward: true,
   canOutward: true,
   canManageDocuments: true,
+  ...NO_ENTRY_RIGHTS,
 };
 
 // Department shown for each company member.
@@ -69,15 +81,19 @@ const DEPARTMENT_ORDER = ["SALES", "ACCOUNT", "WAREHOUSE_MANAGER"];
 // Sales works on outward only; Account only approves; Warehouse gets all.
 const permissionsForRole = (role) => {
   if (role === "SALES")
-    return { canInward: false, canOutward: true, canManageDocuments: false };
+    return { canInward: false, canOutward: true, canManageDocuments: false, ...NO_ENTRY_RIGHTS };
   if (role === "ACCOUNT")
-    return { canInward: false, canOutward: false, canManageDocuments: false };
+    return { canInward: false, canOutward: false, canManageDocuments: false, ...NO_ENTRY_RIGHTS };
   return DEFAULT_PERMISSIONS;
 };
 
 // Which permission checkboxes apply to a role.
 const editableKeysForRole = (role) =>
-  role === "SALES" || role === "ACCOUNT" ? [] : ["canInward", "canOutward", "canManageDocuments"];
+  role === "ACCOUNT"
+    ? []
+    : role === "SALES"
+    ? ["canUpdateOutward", "canDeleteOutward"] // Sales always creates outward; Update / Delete are optional
+    : ["canInward", "canOutward", "canManageDocuments", ...ENTRY_RIGHT_KEYS];
 
 export default function WarehouseManagement() {
   const dispatch = useDispatch();
@@ -368,6 +384,10 @@ export default function WarehouseManagement() {
             canOutward: !!existing.canOutward,
             canManageDocuments:
               !!existing.canManageDocuments,
+            canUpdateInward: !!existing.canUpdateInward,
+            canDeleteInward: !!existing.canDeleteInward,
+            canUpdateOutward: !!existing.canUpdateOutward,
+            canDeleteOutward: !!existing.canDeleteOutward,
           }
         : permissionsForRole(selectedUser?.role),
     );
@@ -929,41 +949,50 @@ export default function WarehouseManagement() {
                 ))}
               </select>
 
-              <div className="flex flex-wrap gap-4">
+              {/* Create / Update / Delete per area. Create is on by default; Update and Delete make those buttons
+                  appear on the entry details page for this user. */}
+              <div className="space-y-2">
                 {[
-                  ["canInward", "Inward"],
-                  ["canOutward", "Outward"],
-                  [
-                    "canManageDocuments",
-                    "Documents",
-                  ],
-                ].map(([key, label]) => (
-                  <label
-                    key={key}
-                    className="inline-flex items-center gap-2 text-sm font-medium text-black"
-                  >
+                  ["Inward", ["canInward", "Create"], ["canUpdateInward", "Update"], ["canDeleteInward", "Delete"]],
+                  ["Outward", ["canOutward", "Create"], ["canUpdateOutward", "Update"], ["canDeleteOutward", "Delete"]],
+                ].map(([area, ...boxes]) => (
+                  <div key={area} className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                    <span className="w-16 text-sm font-semibold text-gray-900">{area}</span>
+                    {boxes.map(([key, label]) => (
+                      <label key={key} className="inline-flex items-center gap-2 text-sm font-medium text-black">
+                        <input
+                          type="checkbox"
+                          checked={!!permissions[key]}
+                          disabled={!!grantUser && !editableKeys.includes(key)}
+                          onChange={() => setPermissions((p) => ({ ...p, [key]: !p[key] }))}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                ))}
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                  <span className="w-16 text-sm font-semibold text-gray-900">Other</span>
+                  <label className="inline-flex items-center gap-2 text-sm font-medium text-black">
                     <input
                       type="checkbox"
-                      checked={permissions[key]}
-                      disabled={!!grantUser && !editableKeys.includes(key)}
-                      onChange={() =>
-                        setPermissions(
-                          (p) => ({
-                            ...p,
-                            [key]: !p[key],
-                          }),
-                        )
-                      }
+                      checked={!!permissions.canManageDocuments}
+                      disabled={!!grantUser && !editableKeys.includes("canManageDocuments")}
+                      onChange={() => setPermissions((p) => ({ ...p, canManageDocuments: !p.canManageDocuments }))}
                     />
-                    {label}
+                    Documents
                   </label>
-                ))}
+                </div>
+                <p className="text-xs text-gray-500">
+                  Update / Delete show as buttons on the entry details page. Delete removes the entry with its items,
+                  serial numbers and documents. Super admin can always do everything.
+                </p>
               </div>
 
               {(grantUserRole === "SALES" || grantUserRole === "ACCOUNT") && (
                 <p className="text-xs text-gray-500">
                   {grantUserRole === "SALES"
-                    ? "Sales members work on outward entries for this warehouse."
+                    ? "Sales members always create outward entries for this warehouse; tick Update / Delete to give them those buttons too."
                     : "Account members approve outward entries for this warehouse."}
                 </p>
               )}
@@ -1026,6 +1055,12 @@ export default function WarehouseManagement() {
                               Documents
                             </Badge>
                           )}
+
+                          {ENTRY_RIGHT_LABELS.filter(([key]) => item[key]).map(([key, label]) => (
+                            <Badge key={key}>
+                              {label}
+                            </Badge>
+                          ))}
                         </div>
                       </div>
 
