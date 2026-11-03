@@ -208,6 +208,8 @@ export default function OutwardDetail() {
   const dispatched = isWarehouse ? outward.dispatchState === "Dispatched" : isDispatchedStatus(workflow);
   const awaitingDispatch = isWarehouse ? outward.dispatchState === "Pending" : isApprovedStatus(workflow);
   const showCost = !isWarehouse;
+  // AC / DC cables: the warehouse manager's final quantity, shown next to the quantity Sales booked.
+  const hasFinalQty = !isDirect && (outward.items || []).some((i) => i.finalQuantity !== null && i.finalQuantity !== undefined);
   // Until dispatch: Sales can edit, Account can reject. After dispatch Sales / Account / Warehouse are locked out;
   // the Super admin's Update button does everything (sales info, cost, items and dispatch details);
   // the warehouse manager can still update the dispatch details, documents and vehicle number.
@@ -509,6 +511,7 @@ export default function OutwardDetail() {
                 <th className="py-2 px-1 sm:py-3 sm:px-3">{isWarehouse ? "Model" : "SKU"}</th>
                 {!isDirect && <th className="py-2 px-1 sm:py-3 sm:px-3">Qty</th>}
                 {!isDirect && <th className="py-2 px-1 sm:py-3 sm:px-3">UOM</th>}
+                {hasFinalQty && <th className="py-2 px-1 sm:py-3 sm:px-3 text-emerald-700">Final Qty</th>}
               </tr>
             </thead>
             <tbody>
@@ -522,11 +525,23 @@ export default function OutwardDetail() {
                       <td className="py-2 px-1 break-words font-medium sm:py-4 sm:px-3">{item.sku || "-"}</td>
                       {!isDirect && <td className="py-2 px-1 sm:py-4 sm:px-3">{item.quantity || 0}</td>}
                       {!isDirect && <td className="py-2 px-1 break-words sm:py-4 sm:px-3">{item.uom || "-"}</td>}
+                      {hasFinalQty && (
+                        <td className="py-2 px-1 sm:py-4 sm:px-3">
+                          {item.finalQuantity !== null && item.finalQuantity !== undefined ? (
+                            <span
+                              title={Number(item.finalQuantity) === Number(item.quantity) ? "Same as booked quantity" : `Booked ${item.quantity}, final ${item.finalQuantity}`}
+                              className={`inline-block rounded-md px-2 py-0.5 font-semibold ${Number(item.finalQuantity) === Number(item.quantity) ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}
+                            >
+                              {item.finalQuantity}
+                            </span>
+                          ) : null}
+                        </td>
+                      )}
                     </tr>
                     {rowSerials.length > 0 && (
                       <tr className="border-b last:border-0">
                         <td />
-                        <td colSpan={4} className="pb-3 px-1 sm:px-3">
+                        <td colSpan={hasFinalQty ? 5 : 4} className="pb-3 px-1 sm:px-3">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="font-bold text-gray-900">SR. No -</span>
                             {rowSerials.map((x) => (

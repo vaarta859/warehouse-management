@@ -20,6 +20,7 @@ const ACTION_STYLES = {
   REJECTED: "bg-red-100 text-red-700",
   ON_HOLD: "bg-purple-100 text-purple-700",
   COST_UPDATED: "bg-blue-100 text-blue-700",
+  FINAL_QTY_UPDATED: "bg-emerald-100 text-emerald-700",
   DISPATCHED: "bg-green-100 text-green-700",
   RECEIVED: "bg-green-100 text-green-700",
 };
@@ -29,6 +30,7 @@ const ACTION_LABELS = {
   UPDATED: "Updated",
   ITEM_ADDED: "Item added",
   ITEM_UPDATED: "Item updated",
+  FINAL_QTY_UPDATED: "Final qty",
   ITEM_REMOVED: "Item removed",
   DOCUMENT_ADDED: "Document added",
   INVOICE_CREATED: "Invoice created",

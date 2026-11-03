@@ -171,6 +171,7 @@ export function sanitizeForWarehouse(entry) {
       companyName: i.companyName,
       sku: i.sku,
       quantity: i.quantity,
+      finalQuantity: i.finalQuantity ?? null,
       uom: i.uom,
     })),
   };
@@ -291,6 +292,13 @@ export function toItemRow(item, previous) {
     sku: String(item.sku).trim(),
     quantity: Number(item.quantity),
     uom: item.uom,
+    // Final quantity (AC / DC cables) is filled by the warehouse manager, never by Sales. When Sales / admin edit the
+    // entry it is kept only while the booked quantity and unit stay the same; otherwise the manager fills it again.
+    finalQuantity:
+      previous && previous.finalQuantity !== null && previous.finalQuantity !== undefined &&
+      Number(previous.quantity) === Number(item.quantity) && previous.uom === item.uom
+        ? previous.finalQuantity
+        : null,
     paymentStatus: item.paymentStatus,
     utrNumber: paid ? String(item.utrNumber || "").trim() || null : null,
     approvedBy: item.paymentStatus !== "COMPLETED" ? String(item.approvedBy || "").trim() || null : null,

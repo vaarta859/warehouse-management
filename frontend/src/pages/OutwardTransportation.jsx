@@ -14,7 +14,7 @@ import {
 import { TRANSPORT_MODES, DISPATCH_MODES, isTransportSubmitted, formatOutwardType, SERIAL_SOURCE_TYPES } from "../features/outward/outwardHelpers";
 import useSerialScanner from "../components/SerialScanner";
 import apiClient from "../services/apiClient";
-import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, withSerialMode } from "../features/outward/serialHelpers";
+import { buildSerialLines, initialSerialValues, isCableCategory, serialPayload, serialProblem, withSerialMode } from "../features/outward/serialHelpers";
 import useProducts from "../features/product/useProducts";
 
 /**
@@ -56,6 +56,9 @@ export default function OutwardTransportation() {
   // Serial numbers: one box per Pcs unit (an item of 4 Pcs -> 4 serial numbers).
   const [serialValues, setSerialValues] = useState({});
   const serialsInitFor = useRef(null);
+  // Final quantity of AC / DC cables, keyed by item id (what the manager really sends; Sales booked the first quantity).
+  const [finalQty, setFinalQty] = useState({});
+  const finalInitFor = useRef(null);
   const locked = Boolean(outward?.transportLocked);
   const products = useProducts();
   // Each product's serial rule (Required / Not required / Optional) comes from the product list.
@@ -66,6 +69,16 @@ export default function OutwardTransportation() {
     if (!outward || outward.id !== id || serialsInitFor.current === id) return;
     serialsInitFor.current = id;
     setSerialValues(initialSerialValues(buildSerialLines(withSerialMode(outward.items || [], products)), outward.serials || []));
+  }, [outward, id]);
+  // Prefill the final quantities once per entry (already filled = correcting it).
+  useEffect(() => {
+    if (!outward || outward.id !== id || finalInitFor.current === id) return;
+    finalInitFor.current = id;
+    const filled = {};
+    for (const item of outward.items || []) {
+      if (isCableCategory(item.category) && item.finalQuantity !== null && item.finalQuantity !== undefined) filled[item.id] = String(item.finalQuantity);
+    }
+    setFinalQty(filled);
   }, [outward, id]);
   // Serial numbers in stock that can be chosen for each item (same inward-type rule the server enforces on submit).
   const [stockSerials, setStockSerials] = useState(null);
@@ -144,6 +157,16 @@ export default function OutwardTransportation() {
       if (problem) return toast.error(problem);
     }
 
+    // AC / DC cables: the final quantity is required for every cable row.
+    const cableItems = (outward.items || []).filter((i) => isCableCategory(i.category));
+    for (const item of cableItems) {
+      const raw = String(finalQty[item.id] ?? "").trim();
+      if (!raw) return toast.error(`Please enter the final quantity for ${item.sku}.`);
+      const num = Number(raw);
+      if (!Number.isInteger(num) || num <= 0) return toast.error(`Final quantity for ${item.sku} must be a whole number greater than 0.`);
+    }
+    const finalQuantities = cableItems.map((item) => ({ id: item.id, finalQuantity: Number(finalQty[item.id]) }));
+
     setSaving(true);
     const result = await dispatch(
       saveOutwardTransportation({
@@ -153,6 +176,7 @@ export default function OutwardTransportation() {
             ? { transportMode: mode, dispatchMode, vehicleNumber: vehicleNumber.trim(), driverName: driverName.trim(), driverContact: driverContact.trim() }
             : { transportMode: mode, dispatchMode, transporterId: transporterId.trim(), transporterName: transporterName.trim(), transporterContact: transporterContact.trim(), vehicleNumber: vehicleNumber.trim(), driverContact: driverContact.trim() }),
           ...(legacyNoSerials ? {} : { serials }),
+          ...(finalQuantities.length ? { finalQuantities } : {}),
         },
       })
     );
@@ -184,6 +208,8 @@ export default function OutwardTransportation() {
 
   const submitted = isTransportSubmitted(outward);
   const items = outward.items || [];
+  const hasCable = items.some((i) => isCableCategory(i.category));
+  const extraCols = hasCable ? 1 : 0;
 
   return (
     <div className="min-h-dvh bg-gray-50 px-4 py-6 md:px-6">
@@ -267,6 +293,7 @@ export default function OutwardTransportation() {
                     <th className="px-1.5 py-2 sm:px-3">Model</th>
                     <th className="px-1.5 py-2 sm:px-3">Qty</th>
                     <th className="px-1.5 py-2 sm:px-3">UOM</th>
+                    {hasCable && <th className="px-1.5 py-2 sm:px-3 text-emerald-700">Final Qty</th>}
                     {serial.hasSerials && <th className="hidden px-3 py-2 sm:table-cell">SR. No</th>}
                   </tr>
                 </thead>
@@ -279,15 +306,37 @@ export default function OutwardTransportation() {
                         <td className="break-words px-1.5 py-3 font-medium sm:whitespace-nowrap sm:px-3 sm:py-2">{item.sku || "-"}</td>
                         <td className="px-1.5 py-3 sm:px-3 sm:py-2">{item.quantity}</td>
                         <td className="px-1.5 py-3 sm:px-3 sm:py-2">{item.uom || "-"}</td>
+                        {hasCable && (
+                          <td className="px-1.5 py-2 sm:px-3">
+                            {isCableCategory(item.category) ? (
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min="1"
+                                step="1"
+                                value={finalQty[item.id] ?? ""}
+                                onChange={(e) => setFinalQty((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                                placeholder={String(item.quantity ?? "")}
+                                aria-label={`Final quantity for ${item.sku}`}
+                                className="w-20 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-sm font-semibold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500 sm:w-28"
+                              />
+                            ) : null}
+                          </td>
+                        )}
                         {serial.hasSerials && <td className="hidden px-3 py-1 align-middle sm:table-cell">{serial.inputCell(item, index)}</td>}
                       </tr>
-                      {serial.hasSerials && serial.mobileInputRow(item, index, 5 + 1)}
-                      {serial.hasSerials && serial.listRow(item, index, 5 + 1)}
+                      {serial.hasSerials && serial.mobileInputRow(item, index, 5 + 1 + extraCols)}
+                      {serial.hasSerials && serial.listRow(item, index, 5 + 1 + extraCols)}
                     </Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
+            {hasCable && !locked && (
+              <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                AC / DC cables: Qty is what Sales booked. Enter the Final Qty you actually send; once submitted, the warehouse stock follows the final quantity and the account team sees it in colour.
+              </p>
+            )}
             {serial.hasSerials && !locked && <p className="mt-2 text-xs text-gray-500">Tap an item row to select it, then type the serial no. and press Enter / Add, tap Scan for the camera, or scan with a connected Bluetooth / Wi-Fi / USB scanner. Scans go only to the selected item and are listed under it. The serial numbers are sent to the account team when you submit.</p>}
             {serial.hasSerials && !locked && SERIAL_SOURCE_TYPES[formatOutwardType(outward.outwardType)] && (
               <p className="mt-1 text-xs font-medium text-gray-700">

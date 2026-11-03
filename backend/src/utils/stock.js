@@ -40,6 +40,36 @@ export const stockKey = (category, sku) =>
   `${String(category || "").trim().toLowerCase()}::${String(sku || "").trim().toLowerCase()}`;
 
 /**
+ * Quantity that really left the warehouse for one outward item row.
+ * Sales books `quantity` first; for AC / DC cables the warehouse manager later fills `finalQuantity`
+ * on the transportation form, and from then on that final quantity is what counts (null = not filled yet).
+ */
+export const effectiveOutwardQty = (row) =>
+  Number(row?.finalQuantity ?? row?.quantity) || 0;
+
+/**
+ * Same as `db.minItem.groupBy({ by, where, _sum: { quantity } })`, but every row counts with its final quantity
+ * when one was filled (see effectiveOutwardQty). Two queries: rows without a final quantity add `quantity`,
+ * rows with one add `finalQuantity`. Returns the usual groupBy shape: [{ ...by fields, _sum: { quantity } }].
+ */
+export async function outwardGroupBy(db, { by, where = {} }) {
+  const [plain, finalised] = await Promise.all([
+    db.minItem.groupBy({ by, where: { ...where, finalQuantity: null }, _sum: { quantity: true } }),
+    db.minItem.groupBy({ by, where: { ...where, finalQuantity: { not: null } }, _sum: { finalQuantity: true } }),
+  ]);
+  const merged = new Map();
+  const put = (row, qty) => {
+    const key = by.map((f) => String(row[f] ?? "")).join("\u0000");
+    const hit = merged.get(key);
+    if (hit) hit._sum.quantity += qty;
+    else merged.set(key, { ...Object.fromEntries(by.map((f) => [f, row[f]])), _sum: { quantity: qty } });
+  };
+  for (const row of plain) put(row, Number(row._sum.quantity) || 0);
+  for (const row of finalised) put(row, Number(row._sum.finalQuantity) || 0);
+  return [...merged.values()];
+}
+
+/**
  * Current stock of every category + SKU in one warehouse.
  *
  * `db` is `prisma` or a transaction client (`tx`) - pass `tx` when calling
@@ -65,7 +95,7 @@ export async function getWarehouseStock(db, warehouseId, { excludeOutwardId, onl
     where: { grn: { warehouseId }, ...skuFilter },
     _sum: { quantity: true },
   });
-  const outwardGroups = await db.minItem.groupBy({
+  const outwardGroups = await outwardGroupBy(db, {
     by: ["category", "sku", "uom"],
     where: {
       ...skuFilter,
@@ -76,7 +106,6 @@ export async function getWarehouseStock(db, warehouseId, { excludeOutwardId, onl
         ...(excludeOutwardId ? { id: { not: excludeOutwardId } } : {}),
       },
     },
-    _sum: { quantity: true },
   });
 
   // Stock moved between companies / warehouses by a transfer: counts as inward where it arrives, outward where it leaves.
@@ -122,7 +151,7 @@ export function sumQuantitiesByKey(items = []) {
   const totals = new Map();
   for (const item of items) {
     const key = stockKey(item.category, item.sku);
-    totals.set(key, (totals.get(key) || 0) + (Number(item.quantity) || 0));
+    totals.set(key, (totals.get(key) || 0) + effectiveOutwardQty(item));
   }
   return totals;
 }
@@ -197,7 +226,7 @@ export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwa
         ...(excludeOutwardId ? { id: { not: excludeOutwardId } } : {}),
       },
     },
-    select: { category: true, sku: true, quantity: true, min: { select: { outwardType: true, companyName: true } } },
+    select: { category: true, sku: true, quantity: true, finalQuantity: true, min: { select: { outwardType: true, companyName: true } } },
   });
 
   const transferRows = await db.stockTransferItem.findMany({
@@ -245,7 +274,7 @@ export async function getWarehouseStockBreakdown(db, warehouseId, { excludeOutwa
     if (group) group.types.set(type, (group.types.get(type) || 0) - qty);
   }
   for (const row of outwardRows) {
-    const qty = Number(row.quantity) || 0;
+    const qty = effectiveOutwardQty(row);
     if (!qty) continue;
     const key = stockKey(row.category, row.sku);
     // Outward of a company that has no inward row of its own is ignored here (nothing to take it from).

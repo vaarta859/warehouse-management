@@ -6,9 +6,9 @@ import { recordAuditLog, recordAuditLogs, diffFields, diffItems, describeItem } 
 import { storeOutwardFiles } from "./documentController.js";
 import { outwardFolder, tempProofFolder } from "../utils/outwardWorkflow.js";
 import { findUnknownProducts, unknownProductsMessage, withSerialModes } from "../utils/productCatalog.js";
-import { getWarehouseStock, getWarehouseStockBreakdown, stockKey, OUTWARD_STOCK_SOURCES, findShortages, shortageMessage } from "../utils/stock.js";
+import { getWarehouseStock, getWarehouseStockBreakdown, stockKey, OUTWARD_STOCK_SOURCES, findShortages, shortageMessage, effectiveOutwardQty } from "../utils/stock.js";
 import { canonicalOutwardType } from "../utils/serialSources.js";
-import { cleanSerials, validateSerials, replaceSerials, pruneSerials } from "../utils/serials.js";
+import { cleanSerials, validateSerials, replaceSerials, pruneSerials, isCableCategory } from "../utils/serials.js";
 import { findSerialSourceProblem, listAvailableSerials, listBlockedSerials } from "../utils/serialSources.js";
 import {
   STATUS,
@@ -1392,6 +1392,28 @@ export async function dispatchOutward(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// FINAL QUANTITY (AC / DC cables) - filled by the warehouse manager on the transportation form.
+// Sales books the cable quantity first (stock is reduced by it). Once the manager has measured what really went
+// out, the final quantity replaces it in every stock figure (see effectiveOutwardQty in utils/stock.js).
+// Returns { error } or { updates: [{ id, finalQuantity }] } (nothing to do when the entry has no cable item).
+// ---------------------------------------------------------------------------
+function parseFinalQuantities(items, raw) {
+  const sent = new Map((Array.isArray(raw) ? raw : []).map((r) => [String(r?.id), r?.finalQuantity]));
+  const updates = [];
+  for (const [index, item] of items.entries()) {
+    if (!isCableCategory(item.category)) continue;
+    const label = `Item ${index + 1} (${item.sku})`;
+    const value = sent.get(String(item.id));
+    if (value === undefined || value === null || String(value).trim() === "") return { error: `${label}: final quantity is required for AC / DC cables` };
+    const qty = Number(value);
+    // MinItem.quantity is an Int, so the final quantity is a whole number too.
+    if (!Number.isInteger(qty) || qty <= 0) return { error: `${label}: final quantity must be a whole number greater than 0` };
+    updates.push({ id: item.id, finalQuantity: qty });
+  }
+  return { updates };
+}
+
+// ---------------------------------------------------------------------------
 // TRANSPORTATION  (Warehouse manager, Super admin) - opens once Account has approved the entry
 // Vehicle type: "Dedicated vehicle" (vehicle no. + driver name + driver contact) or "Transportation" (ID + name).
 // Submitting it unlocks the document upload for the account team. Can be corrected until the entry is dispatched.
@@ -1431,6 +1453,11 @@ export async function saveTransportation(req, res) {
     const columns = toTransportColumns(data);
     const isFirstTime = !existing.transportSubmittedAt;
 
+    // AC / DC cables: the manager fills the final quantity next to the quantity Sales booked.
+    const finalParsed = parseFinalQuantities(existing.items, data.finalQuantities);
+    if (finalParsed.error) return res.status(422).json({ message: finalParsed.error });
+    const finalUpdates = finalParsed.updates;
+
     // Serial numbers: one for every Pcs unit, scanned on this form and shared with the account team.
     // Same rule on first save and on update: Required items need all their serial numbers, Optional all or none.
     const serials = cleanSerials(data.serials);
@@ -1460,6 +1487,17 @@ export async function saveTransportation(req, res) {
         if (clash) throw httpError(422, clash);
         await replaceSerials(tx, id, serials);
       }
+      if (finalUpdates.length) {
+        // The final quantity now decides how much stock this entry takes. Going UP needs the extra to be in stock
+        // (lowering, or keeping the current figure, is never blocked).
+        const finalById = new Map(finalUpdates.map((u) => [u.id, u.finalQuantity]));
+        const cableItems = existing.items.filter((i) => finalById.has(i.id));
+        const wanted = cableItems.map((i) => ({ ...i, finalQuantity: finalById.get(i.id) }));
+        const stock = await getWarehouseStock(tx, existing.warehouseId, { excludeOutwardId: id, onlyItems: wanted });
+        const shortages = findShortages(wanted, stock, cableItems);
+        if (shortages.length) throw httpError(422, shortageMessage(shortages));
+        for (const u of finalUpdates) await tx.minItem.update({ where: { id: u.id }, data: { finalQuantity: u.finalQuantity } });
+      }
     });
     // TRANSPORT_PENDING -> DOCS_PENDING (or READY_FOR_DISPATCH when the release document is already there).
     if (isFirstTime) await syncApprovedStage(prisma, id);
@@ -1472,6 +1510,11 @@ export async function saveTransportation(req, res) {
       ? [{ ...base, action: "TRANSPORT_SUBMITTED", description: `Transportation details submitted: ${describe({ ...columns, mode: columns.transportMode })}` }]
       : diffFields(existing, columns, ["transportMode", "dispatchMode", "vehicleNumber", "driverName", "driverContact", "transporterId", "transporterName", "transporterContact"])
           .map((c) => ({ ...base, action: "UPDATED", description: `${c.label} updated from "${c.oldValue || "—"}" to "${c.newValue || "—"}"`, changes: c }));
+    for (const u of finalUpdates) {
+      const item = existing.items.find((i) => i.id === u.id);
+      if (!item || effectiveOutwardQty(item) === u.finalQuantity) continue;
+      entries.push({ ...base, action: "FINAL_QTY_UPDATED", description: `Final quantity for ${describeItem(item)}: ${item.quantity} booked, ${u.finalQuantity} ${item.uom} sent`, changes: { field: "finalQuantity", item: describeItem(item), oldValue: item.finalQuantity ?? item.quantity, newValue: u.finalQuantity } });
+    }
     if (!legacyNoSerials && serials.length) {
       const via = { CAMERA: 0, SCANNER: 0, MANUAL: 0 };
       serials.forEach((x) => { via[x.source] += 1; });

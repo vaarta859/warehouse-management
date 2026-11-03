@@ -1,5 +1,5 @@
 import { INWARD, canonicalInwardType, canonicalOutwardType } from "./serialSources.js";
-import { balancesByType, stockKey } from "./stock.js";
+import { balancesByType, effectiveOutwardQty, stockKey } from "./stock.js";
 import { serialKey } from "./serials.js";
 import { serialWhere, transferInAt } from "./transferSerials.js";
 
@@ -46,7 +46,7 @@ export async function getLocationStock(db, { warehouseId, companyName, withSeria
     }),
     db.minItem.findMany({
       where: { min: { warehouseId, companyName: eq(companyName), status: { not: "REJECTED" } }, ...only },
-      select: { category: true, sku: true, uom: true, quantity: true, min: { select: { outwardType: true } } },
+      select: { category: true, sku: true, uom: true, quantity: true, finalQuantity: true, min: { select: { outwardType: true } } },
     }),
     db.stockTransferItem.findMany({
       where: { transfer: { toWarehouseId: warehouseId, toCompanyName: eq(companyName) }, ...only },
@@ -88,7 +88,7 @@ export async function getLocationStock(db, { warehouseId, companyName, withSeria
     if (qty) addTo(groupFor(row).transferOut, canonicalInwardType(row.stockType) || INWARD.NEW, qty);
   }
   for (const row of outwardRows) {
-    const qty = Number(row.quantity) || 0;
+    const qty = effectiveOutwardQty(row);
     if (qty) groupFor(row).outwardList.push({ outwardType: canonicalOutwardType(row.min?.outwardType), qty });
   }
 

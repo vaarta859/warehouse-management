@@ -20,6 +20,7 @@ import {
   RECEIVING_REQUIRED_DOCUMENT,
 } from "../features/outward/outwardHelpers";
 import OutwardDocuments from "../components/OutwardDocuments";
+import OutwardItemsSection from "../components/OutwardItemsSection";
 
 /**
  * =========================================================
@@ -161,6 +162,8 @@ export default function OutwardReceiving() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          <OutwardItemsSection outward={outward} />
+
           <section className="rounded-2xl border border-gray-200 bg-white p-5 md:p-6">
             <h2 className="mb-4 text-sm font-semibold text-gray-900">Dispatch summary</h2>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">

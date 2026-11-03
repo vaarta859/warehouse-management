@@ -2,7 +2,7 @@ import prisma from "../config/prisma.js";
 import { warehouseIdsForCompanies } from "../utils/warehouseCompanies.js";
 import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../utils/outwardWorkflow.js";
 import { INWARD, canonicalInwardType, canonicalOutwardType } from "../utils/serialSources.js";
-import { balancesByType } from "../utils/stock.js";
+import { balancesByType, effectiveOutwardQty, outwardGroupBy } from "../utils/stock.js";
  
 /**
  * =========================================================
@@ -74,7 +74,8 @@ function periodWhere(dateFrom, dateTo) {
 }
  
 function sumQuantity(items = []) {
-  return items.reduce((total, item) => total + Number(item.quantity || 0), 0);
+  // An outward item counts with its final quantity once the warehouse manager has filled it (GRN items have none).
+  return items.reduce((total, item) => total + Number(item.finalQuantity ?? item.quantity ?? 0), 0);
 }
  
 // True if any required document is missing from the uploaded set —
@@ -102,7 +103,7 @@ function ledgerItems(items = []) {
     category: item.category || null,
     sku: item.sku || null,
     companyName: item.companyName || null,
-    quantity: Number(item.quantity || 0),
+    quantity: Number(item.finalQuantity ?? item.quantity ?? 0),
     uom: item.uom || null,
   }));
 }
@@ -130,7 +131,7 @@ export async function getReportSummary(req, res) {
     // ---- units currently on hand (all-time) ----
     const [stockIn0, stockOut0, transferIn, transferOut] = await Promise.all([
       prisma.grnItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeGrn }),
-      prisma.minItem.groupBy({ by: ["uom"], _sum: { quantity: true }, where: scopeMin }),
+      outwardGroupBy(prisma, { by: ["uom"], where: scopeMin }),
       // Stock transfers: arriving stock counts where it arrives, leaving stock where it leaves.
       prisma.stockTransferItem.groupBy({
         by: ["uom"],
@@ -171,9 +172,8 @@ export async function getReportSummary(req, res) {
         _sum: { quantity: true },
         where: { grn: { ...warehouseWhere(warehouseIds), ...period } },
       }),
-      prisma.minItem.groupBy({
+      outwardGroupBy(prisma, {
         by: ["uom"],
-        _sum: { quantity: true },
         where: { min: { ...warehouseWhere(warehouseIds), ...period } },
       }),
       prisma.grn.count({ where: { ...warehouseWhere(warehouseIds), ...period } }),
@@ -268,7 +268,7 @@ export async function getReportLedger(req, res) {
       }),
       prisma.min.findMany({
         where: { ...warehouseWhere(warehouseIds), ...period },
-        select: { id: true, outwardNumber: true, createdAt: true, items: { select: { category: true, sku: true, companyName: true, uom: true, quantity: true } } },
+        select: { id: true, outwardNumber: true, createdAt: true, items: { select: { category: true, sku: true, companyName: true, uom: true, quantity: true, finalQuantity: true } } },
         orderBy: { createdAt: "desc" },
         take,
       }),
@@ -392,7 +392,7 @@ export async function getStockLedger(req, res) {
       prisma.minItem.findMany({
         // A rejected outward never leaves the warehouse, so it is not counted (same rule as the outward form).
         where: { min: { AND: [warehouseWhere(warehouseIds), companyFilter], status: { not: "REJECTED" } }, ...searchWhere },
-        select: { category: true, sku: true, uom: true, quantity: true, min: { select: { warehouseId: true, outwardType: true, companyName: true } } },
+        select: { category: true, sku: true, uom: true, quantity: true, finalQuantity: true, min: { select: { warehouseId: true, outwardType: true, companyName: true } } },
       }),
       prisma.stockTransferItem.findMany({
         where: {
@@ -459,7 +459,7 @@ export async function getStockLedger(req, res) {
       g.transferOut.set(type, (g.transferOut.get(type) || 0) + qty);
     }
     for (const row of outwardRows) {
-      const qty = Number(row.quantity) || 0;
+      const qty = effectiveOutwardQty(row);
       if (!qty) continue;
       const g = groupFor(row, row.min?.warehouseId, row.min?.companyName);
       g.outwardList.push({ outwardType: canonicalOutwardType(row.min?.outwardType), qty });

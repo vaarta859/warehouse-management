@@ -368,6 +368,7 @@ model MinItem {
   companyName String?
   sku         String
   quantity    Int
+  finalQuantity Int?     // NEW - AC / DC cables: filled by the warehouse manager, null = not filled yet
   uom         String
 
   min Min @relation(fields: [minId], references: [id], onDelete: Cascade)

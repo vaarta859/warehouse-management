@@ -16,6 +16,7 @@ import {
 } from "../features/outward/outwardSlice";
 import { STAGE, DISPATCH_MODES, transportModeLabel, isTransportSubmitted, isReceivingDocCategory, isPlaceholder, paymentStatusLabel, refTypeLabel, refTypeDocument, REQUIRED_DOCUMENTS, MANAGER_REF_TYPES, isAccountRef, isManagerRef, isAccountDocCategory } from "../features/outward/outwardHelpers";
 import OutwardDocuments from "../components/OutwardDocuments";
+import OutwardItemsSection from "../components/OutwardItemsSection";
 
 import LocationLink from "../components/LocationLink";
 /**
@@ -322,6 +323,9 @@ export default function OutwardDispatch() {
             </div>
           )}
           </section>
+
+          {/* Item details for everyone who opens the dispatch page (ready for dispatch, and after dispatch). */}
+          <OutwardItemsSection outward={outward} />
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 md:p-6">
             <h2 className="mb-4 text-sm font-semibold text-gray-900">Dispatch details</h2>

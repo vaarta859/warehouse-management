@@ -81,9 +81,23 @@ export function downloadOutwardPdf(outward, items, documentRows, currentStatus, 
 
   doc.subheading("Items");
   const costLabel = { COMPLETED: "Completed", PARTIALLY_COMPLETED: "Partially completed", PENDING: "Pending", ZERO_COST: "₹ 0" };
+  // AC / DC cables: the warehouse manager's final quantity gets its own column once any item has one.
+  const hasFinal = items.some((i) => i.finalQuantity !== null && i.finalQuantity !== undefined);
+  const finalCell = (item) => (item.finalQuantity !== null && item.finalQuantity !== undefined ? String(item.finalQuantity) : "");
   doc.table({
     columns: includeCost
-      ? [
+      ? hasFinal
+        ? [
+            { header: "#", width: 25 },
+            { header: "Category", width: 90 },
+            { header: "SKU / Model", width: 105 },
+            { header: "Qty", width: 40 },
+            { header: "Final Qty", width: 45 },
+            { header: "UOM", width: 45 },
+            { header: "Payment status", width: 80 },
+            { header: "Approve By", width: 70 },
+          ]
+        : [
           { header: "#", width: 30 },
           { header: "Category", width: 105 },
           { header: "SKU / Model", width: 120 },
@@ -92,18 +106,28 @@ export function downloadOutwardPdf(outward, items, documentRows, currentStatus, 
           { header: "Payment status", width: 85 },
           { header: "Approve By", width: 85 },
         ]
-      : [
-          { header: "#", width: 30 },
-          { header: "Category", width: 150 },
-          { header: "SKU / Model", width: 190 },
-          { header: "Qty", width: 65 },
-          { header: "UOM", width: 80 },
-        ],
+      : hasFinal
+        ? [
+            { header: "#", width: 30 },
+            { header: "Category", width: 130 },
+            { header: "SKU / Model", width: 160 },
+            { header: "Qty", width: 55 },
+            { header: "Final Qty", width: 60 },
+            { header: "UOM", width: 70 },
+          ]
+        : [
+            { header: "#", width: 30 },
+            { header: "Category", width: 150 },
+            { header: "SKU / Model", width: 190 },
+            { header: "Qty", width: 65 },
+            { header: "UOM", width: 80 },
+          ],
     rows: items.map((item, index) => [
       String(index + 1),
       item.category || "-",
       item.sku || "-",
       String(item.quantity || 0),
+      ...(hasFinal ? [finalCell(item)] : []),
       item.uom || "-",
       ...(includeCost ? [costLabel[item.paymentStatus] || "-", item.approvedBy || "-"] : []),
     ]),
