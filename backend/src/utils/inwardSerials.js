@@ -12,6 +12,8 @@ import { requiredSerialLines, serialKey } from "./serials.js";
  *   - a serial is used once inside one entry
  *   - every Pcs unit needs its own serial number: an item of 5 Pcs needs 5 serial numbers
  *     (an older entry saved before serials existed may still be edited without any)
+ *   - a PARTIAL entry (saved part-way, stock already visible) may have fewer serials than units;
+ *     the full count is enforced when it is completed
  *   - the same serial may come in again on a LATER entry (a returned or repaired unit re-enters stock),
  *     so, unlike outward, it is not blocked by other entries
  * =========================================================
@@ -19,7 +21,7 @@ import { requiredSerialLines, serialKey } from "./serials.js";
 const MAX_SERIAL_LENGTH = 100;
 
 /** Error message, or null when the serials fit the items. */
-export function validateInwardSerials(items, serials, { allowEmpty = false } = {}) {
+export function validateInwardSerials(items, serials, { allowEmpty = false, partial = false } = {}) {
   if (allowEmpty && serials.length === 0) return null;
   const lines = requiredSerialLines(items);
   const seen = new Set();
@@ -38,6 +40,11 @@ export function validateInwardSerials(items, serials, { allowEmpty = false } = {
 
   for (const [key, line] of lines) {
     const have = counts.get(key) || 0;
+    // PARTIAL entry: serial numbers may still be on their way - only refuse more serials than units.
+    if (partial) {
+      if (have > line.quantity) return `${line.sku}: only ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} allowed, ${have} entered`;
+      continue;
+    }
     // OPTIONAL: all units or none. REQUIRED: all units.
     if (line.serialMode === "OPTIONAL" && have === 0) continue;
     if (have !== line.quantity) {

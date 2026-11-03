@@ -31,6 +31,15 @@ const REQUIRED_DOCUMENTS = [
   "Unloading sign-off sheet",
 ];
  
+// An inward entry is COMPLETE by default. The warehouse can also save it as PARTIAL (from the item details):
+// its items are in stock straight away (stock is worked out from every GRN item), so Sales can already use
+// them, while the entry stays editable until it is completed.
+const ENTRY_STATUS = { PARTIAL: "PARTIAL", COMPLETE: "COMPLETE" };
+const normalizeEntryStatus = (value, fallback = ENTRY_STATUS.COMPLETE) => {
+  const v = String(value || "").trim().toUpperCase();
+  return v === ENTRY_STATUS.PARTIAL || v === ENTRY_STATUS.COMPLETE ? v : fallback;
+};
+
 const META_PREFIX = "__INWARD_META__";
  
 function buildStoredRemarks(companyName, documentNumbers, remarks) {
@@ -677,7 +686,7 @@ export async function updateGrn(req, res) {
       select: {
         id: true, warehouseId: true, grnNumber: true,
         inwardType: true, supplierName: true, companyName: true,
-        refDocType: true, refDocNumber: true, remarks: true,
+        refDocType: true, refDocNumber: true, remarks: true, entryStatus: true,
         items: { select: { category: true, sku: true, companyName: true, quantity: true, uom: true } },
         _count: { select: { serials: true } },
       },
@@ -705,6 +714,14 @@ export async function updateGrn(req, res) {
     if (!data.inwardType || !data.supplierName?.trim() || !data.companyName?.trim()) {
       return res.status(422).json({ message: "Inward type, supplier and company name are required." });
     }
+    // Only a PARTIAL entry stays open for the warehouse team; a completed one is changed by Super Admin only.
+    const wasPartial = normalizeEntryStatus(existing.entryStatus) === ENTRY_STATUS.PARTIAL;
+    if (req.user.role !== "SUPER_ADMIN" && !wasPartial) {
+      return res.status(403).json({ message: "This inward entry is complete. Only Super Admin can change it." });
+    }
+    // Not sent = keep what the entry already is.
+    const entryStatus = normalizeEntryStatus(data.entryStatus, normalizeEntryStatus(existing.entryStatus));
+    const isPartial = entryStatus === ENTRY_STATUS.PARTIAL;
     const companyError = await checkInwardCompany(req.user, warehouseCompanies, data.companyId);
     if (companyError) return res.status(400).json({ message: companyError });
     // Reference documents are optional.
@@ -744,6 +761,20 @@ export async function updateGrn(req, res) {
       quantity: Number(item.quantity), uom: item.uom,
       companyName: item.companyName ? String(item.companyName).trim() || null : null,
     }));
+    // Items already saved on a partial entry are in stock (Sales may be using them): the warehouse team can add
+    // items or raise quantities, but not delete an item or lower its quantity. Super Admin can do everything.
+    if (wasPartial && req.user.role !== "SUPER_ADMIN") {
+      const keyOf = (i) => `${String(i.category || "").trim().toLowerCase()}::${String(i.sku || "").trim().toLowerCase()}`;
+      const sum = (list) => list.reduce((m, i) => m.set(keyOf(i), (m.get(keyOf(i)) || 0) + (Number(i.quantity) || 0)), new Map());
+      const before = sum(existing.items);
+      const after = sum(newItems);
+      for (const [key, qty] of before) {
+        if ((after.get(key) || 0) < qty) {
+          const sample = existing.items.find((i) => keyOf(i) === key);
+          return res.status(403).json({ message: `"${sample.sku}" is already saved in stock on this partial entry - it cannot be removed or reduced. You can add more items or increase the quantity.` });
+        }
+      }
+    }
     // Serial numbers: when the client sends them they replace the saved ones; otherwise the saved ones are kept
     // (and trimmed if the items changed).
     const serialsProvided = Array.isArray(data.serials);
@@ -753,7 +784,7 @@ export async function updateGrn(req, res) {
     // Same rule as when creating: a Required item must have all its serial numbers, also when updating.
     // (Not sent = the form did not include them, which only passes when no item needs serial numbers.)
     {
-      const serialProblem = validateInwardSerials(serialItems, serialsProvided ? serials : []);
+      const serialProblem = validateInwardSerials(serialItems, serialsProvided ? serials : [], { partial: isPartial });
       if (serialProblem) return res.status(422).json({ message: serialProblem });
       // A serial that is already in stock (not dispatched since it came in) cannot be received again.
       if (serialsProvided) {
@@ -777,6 +808,7 @@ export async function updateGrn(req, res) {
           refDocNumber: normalizedRefs[0]?.refDocNumber || "",
           refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
           remarks: data.remarks?.trim() || null,
+          entryStatus,
           items: {
             deleteMany: {},
             create: newItems,
@@ -814,6 +846,14 @@ export async function updateGrn(req, res) {
           changes: { count: serials.length },
         });
       }
+      if (normalizeEntryStatus(existing.entryStatus) !== entryStatus) {
+        await recordAuditLog(tx, {
+          ...auditBase,
+          action: "UPDATED",
+          description: entryStatus === ENTRY_STATUS.COMPLETE ? "Inward entry marked Complete" : "Inward entry marked Partial",
+          changes: { field: "entryStatus", oldValue: normalizeEntryStatus(existing.entryStatus), newValue: entryStatus },
+        });
+      }
       for (const change of fieldChanges) {
         await recordAuditLog(tx, {
           ...auditBase,
@@ -846,7 +886,7 @@ export async function updateGrn(req, res) {
           changes: { field: "quantity", item: describeItem(item), oldValue: oldQuantity, newValue: newQuantity },
         });
       }
-      if (!serialsChanged && !fieldChanges.length && !itemChanges.added.length && !itemChanges.removed.length && !itemChanges.updated.length) {
+      if (!serialsChanged && !fieldChanges.length && !itemChanges.added.length && !itemChanges.removed.length && !itemChanges.updated.length && normalizeEntryStatus(existing.entryStatus) === entryStatus) {
         await recordAuditLog(tx, {
           ...auditBase,
           action: "UPDATED",
@@ -870,6 +910,8 @@ export async function createGrn(req, res) {
     // =====================================================
  
     const data = req.body;
+    const entryStatus = normalizeEntryStatus(data.entryStatus);
+    const isPartial = entryStatus === ENTRY_STATUS.PARTIAL;
  
     // =====================================================
     // BASIC DEFAULTS
@@ -1058,7 +1100,7 @@ export async function createGrn(req, res) {
  
     // Serial numbers: one for every Pcs unit (an item of 5 Pcs needs 5).
     const serials = cleanSerials(data.serials);
-    const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials);
+    const serialProblem = validateInwardSerials(await withSerialModes(prisma, itemRows), serials, { partial: isPartial });
     if (serialProblem) return res.status(422).json({ message: serialProblem });
     // A serial that is already in stock (not dispatched since it came in) cannot be received again.
     const inStockProblem = await findInwardSerialProblem(prisma, { serials });
@@ -1085,6 +1127,7 @@ export async function createGrn(req, res) {
                 refDocNumber: referenceDocumentRows[0]?.refDocNumber || String(data.refDocNumber || "").trim(),
                 refDocDate: data.refDocDate ? new Date(data.refDocDate) : new Date(),
                 remarks: data.remarks || null,
+                entryStatus,
                 createdById: req.user.id,
                 items: { createMany: { data: itemRows } },
                 ...(referenceDocumentRows.length
@@ -1147,7 +1190,7 @@ export async function createGrn(req, res) {
       entityId: createdGrn.id,
       entityNumber: createdGrn.grnNumber,
       action: "CREATED",
-      description: `Inward entry ${createdGrn.grnNumber} created with ${itemRows.length} item${itemRows.length === 1 ? "" : "s"}${serials.length ? ` and ${serials.length} serial number${serials.length === 1 ? "" : "s"}` : ""}`,
+      description: `${isPartial ? "Partial inward" : "Inward"} entry ${createdGrn.grnNumber} created with ${itemRows.length} item${itemRows.length === 1 ? "" : "s"}${serials.length ? ` and ${serials.length} serial number${serials.length === 1 ? "" : "s"}` : ""}`,
       userId: req.user.id,
       warehouseId: createdGrn.warehouseId,
     };
@@ -1160,6 +1203,7 @@ export async function createGrn(req, res) {
       inwardType: data.inwardType,
       supplierName: data.supplierName,
       companyName: data.companyName || null,
+      entryStatus,
       items: itemRows,
       documents: documentRows.map((doc) => ({ docCategory: doc.docCategory || "Other", fileKey: doc.fileKey })),
     };
@@ -1179,7 +1223,7 @@ export async function createGrn(req, res) {
  
     return res.status(201).json({
       message:
-        "GRN created successfully",
+        isPartial ? "GRN saved as partial" : "GRN created successfully",
  
       data: {
         ...result,

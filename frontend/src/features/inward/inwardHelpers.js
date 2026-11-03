@@ -203,6 +203,8 @@ export function formatGrn(grn, index) {
     serials,
     status: statusData.status,
     statusType: statusData.statusType,
+    // COMPLETE (default) or PARTIAL (saved part-way; its items are already in stock).
+    entryStatus: String(grn.entryStatus || "COMPLETE").toUpperCase(),
     pendingDocuments: statusData.pendingDocuments,
     uploadedDocuments: statusData.uploadedDocuments,
     requiredDocuments: statusData.requiredDocuments,

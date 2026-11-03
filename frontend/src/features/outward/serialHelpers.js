@@ -119,6 +119,24 @@ export function inwardSerialProblem(lines, values) {
   return null;
 }
 
+/**
+ * Partial inward save: serial numbers may still be on their way, so only duplicates and too many serials
+ * for an item are refused. The full count is checked when the entry is completed.
+ */
+export function partialSerialProblem(lines, values) {
+  const seen = new Set();
+  for (const line of lines) {
+    const filled = (values[line.key] || []).filter((s) => cleanSerialInput(s.serialNo));
+    for (const s of filled) {
+      const k = cleanSerialInput(s.serialNo).toLowerCase();
+      if (seen.has(k)) return `Serial number "${cleanSerialInput(s.serialNo)}" is entered more than once`;
+      seen.add(k);
+    }
+    if (filled.length > line.quantity) return `${line.sku}: only ${line.quantity} serial number${line.quantity === 1 ? "" : "s"} allowed, ${filled.length} entered.`;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Ordering + scan clean-up
 // ---------------------------------------------------------------------------------------------------------

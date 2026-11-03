@@ -119,31 +119,29 @@ function formatDateRangeLabel({ preset, from, to }) {
   return `${formatShortDate(from)} – ${formatShortDate(to)}`;
 }
 
-function StatusBadge({
-  status,
-  statusType,
-  pendingDocuments = 0,
-}) {
-  const styles = {
-    complete: "bg-green-100 text-green-700",
-    pending: "bg-amber-100 text-amber-700",
-    missing: "bg-red-100 text-red-600",
-  };
-
-  const label =
-    statusType === "pending" && pendingDocuments > 0
-      ? `${status} (${pendingDocuments} ${
-          pendingDocuments === 1 ? "doc" : "docs"
-        })`
-      : status;
-
+// Entry status: Pending (saved as partial, still being completed) or Complete.
+function EntryStatusBadge({ partial = false }) {
   return (
     <span
       className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-        styles[statusType] || styles.complete
+        partial ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
       }`}
     >
-      {label}
+      {partial ? "Pending" : "Complete"}
+    </span>
+  );
+}
+
+// Documents: "Complete" or how many of the required documents are still missing.
+function DocumentsBadge({ statusType, pendingDocuments = 0 }) {
+  const done = statusType === "complete";
+  return (
+    <span
+      className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+        done ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"
+      }`}
+    >
+      {done ? "Complete" : `${pendingDocuments} ${pendingDocuments === 1 ? "doc" : "docs"} pending`}
     </span>
   );
 }
@@ -589,6 +587,13 @@ export default function Inward() {
       return;
     }
 
+    // A partial entry opens straight in the form for the warehouse manager, to add more items and complete it.
+    // Super Admin, Sales and Account open the details page (Super Admin has the Update button there).
+    if (item.entryStatus === "PARTIAL" && currentUser?.role === "WAREHOUSE_MANAGER") {
+      navigate(`/inward/${item.id}/edit`);
+      return;
+    }
+
     navigate(`/inward/${item.id}`);
   };
 
@@ -754,7 +759,7 @@ export default function Inward() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[850px] text-left">
+              <table className="w-full min-w-[950px] text-left">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
@@ -779,6 +784,9 @@ export default function Inward() {
 
                     <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                       Status
+                    </th>
+                    <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                      Documents
                     </th>
 
                     <th className="px-5 py-3"></th>
@@ -831,15 +839,20 @@ export default function Inward() {
                       </td>
 
                       <td className="px-5 py-4">
-                        <StatusBadge
-                          status={item.status}
-                          statusType={
-                            item.statusType
-                          }
-                          pendingDocuments={
-                            item.pendingDocuments
-                          }
-                        />
+
+
+                        <EntryStatusBadge partial={item.entryStatus === "PARTIAL"} />
+
+
+                      </td>
+
+
+                      <td className="px-5 py-4">
+
+
+                        <DocumentsBadge statusType={item.statusType} pendingDocuments={item.pendingDocuments} />
+
+
                       </td>
 
                       <td className="px-5 py-4 text-right">
@@ -980,15 +993,10 @@ export default function Inward() {
                               {item.grn}
                             </p>
 
-                            <StatusBadge
-                              status={item.status}
-                              statusType={
-                                item.statusType
-                              }
-                              pendingDocuments={
-                                item.pendingDocuments
-                              }
-                            />
+                            <span className="flex flex-wrap items-center justify-end gap-1">
+                              <EntryStatusBadge partial={item.entryStatus === "PARTIAL"} />
+                              <DocumentsBadge statusType={item.statusType} pendingDocuments={item.pendingDocuments} />
+                            </span>
                           </div>
 
                           <p className="mt-1 truncate text-xs text-gray-700">

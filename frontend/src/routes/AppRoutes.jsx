@@ -97,7 +97,7 @@ const router = createBrowserRouter([
   { path: "/stock-ledger/transfer", element: fullScreen(<StockTransferForm />, ["SUPER_ADMIN", "ACCOUNT"]) },
   { path: "/stock-ledger/transfers", element: fullScreen(<StockTransfers />, VIEW_ROLES) },
   { path: "/inward/create", element: fullScreen(<InwardForm />, INVENTORY_ROLES) },
-  { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, ["SUPER_ADMIN"]) },
+  { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, ["SUPER_ADMIN", "WAREHOUSE_MANAGER"]) },
   { path: "/inward/:id", element: fullScreen(<InwardDetail />, VIEW_ROLES) },
 
   // Sales fills customer + item + cost details (and edits them until Account approves).

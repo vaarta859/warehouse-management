@@ -199,6 +199,7 @@ model Grn {
   id String @id @default(uuid())
 
   grnNumber  String @unique
+  entryStatus String @default("COMPLETE")   // "COMPLETE" | "PARTIAL"
   inwardType String
 
   supplierName String
@@ -209,6 +210,7 @@ model Grn {
   refDocDate     DateTime
   ewayBillNumber String?
   remarks        String?
+
 
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id])

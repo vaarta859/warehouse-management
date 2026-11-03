@@ -79,7 +79,13 @@ export default function InwardDetail() {
   // Sales / Account can view inward details and download documents, nothing more.
   const viewOnly = useSelector((state) => ["SALES", "ACCOUNT"].includes(state.auth.user?.role));
   // Only Super Admin can edit an inward entry; warehouse managers can still manage documents.
-  const canUpdate = useSelector((state) => state.auth.user?.role === "SUPER_ADMIN");
+  const userRole = useSelector((state) => state.auth.user?.role);
+  const canUpdate = userRole === "SUPER_ADMIN";
+  // A partial entry opens straight in the form for the warehouse team (no Update button); Sales / Account only view it.
+  const reopenPartial = userRole === "WAREHOUSE_MANAGER" && String(inward?.entryStatus || "").toUpperCase() === "PARTIAL";
+  useEffect(() => {
+    if (reopenPartial && inward?.id) navigate(`/inward/${inward.id}/edit`, { replace: true });
+  }, [reopenPartial, inward?.id]);
   const detailStatus = useSelector(selectInwardDetailStatus);
   const error = useSelector(selectInwardDetailError);
   const docActionStatus = useSelector(selectDocActionStatus);
@@ -276,6 +282,11 @@ export default function InwardDetail() {
               <button type="button" onClick={() => downloadInwardPdf(inward, items, documents)} className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:text-sm"><Download size={15} /> Download</button>
             </div>
 
+            {String(inward.entryStatus || "").toUpperCase() === "PARTIAL" && (
+              <span className="shrink-0 rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-700 sm:px-4 sm:py-2 sm:text-sm">
+                Partial entry
+              </span>
+            )}
             <span
               className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium sm:px-4 sm:py-2 sm:text-sm ${
                 currentStatus === "Complete" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
@@ -299,7 +310,10 @@ export default function InwardDetail() {
             <Info icon={<Calendar size={18} />} label="Inward Date & Time" value={inward.inwardDateTime ? new Date(inward.inwardDateTime).toLocaleString("en-IN") : (inward.refDocDate ? new Date(inward.refDocDate).toLocaleString("en-IN") : "-")} />
 
             <Info label="Created By" value={inward.createdBy?.name || inward.createdBy?.email || "-"} />
-            <Info label="Remarks" value={inward.remarks || "-"} />
+            <Info
+              label="Remarks"
+              value={inward.remarks?.trim() ? <span className="whitespace-pre-wrap font-semibold text-red-600">{inward.remarks}</span> : "-"}
+            />
           </div>
           <div className="mt-5 border-t pt-5">
             <p className="mb-3 text-sm font-semibold text-gray-700">Reference Documents</p>

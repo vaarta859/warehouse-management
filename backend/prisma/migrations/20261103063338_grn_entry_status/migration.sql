@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Grn" ADD COLUMN     "entryStatus" TEXT NOT NULL DEFAULT 'COMPLETE';

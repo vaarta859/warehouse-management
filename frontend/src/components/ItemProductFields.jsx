@@ -228,6 +228,7 @@ export default function ItemProductFields({
   canAdd = false,
   getStock,
   stockBlockReason = "",
+  locked = false,
 }) {
   const stockMode = typeof getStock === "function";
 
@@ -284,7 +285,7 @@ export default function ItemProductFields({
             Category
           </label>
 
-          {canAdd && (
+          {canAdd && !locked && (
             <button
               type="button"
               onClick={() => setAddMode("category")}
@@ -298,7 +299,7 @@ export default function ItemProductFields({
 
         <SearchableSelect
           value={categoryValue}
-          disabled={Boolean(stockBlockReason)}
+          disabled={Boolean(stockBlockReason) || locked}
           placeholder={
             stockBlockReason || "Select category"
           }
@@ -321,7 +322,7 @@ export default function ItemProductFields({
             SKU / Model
           </label>
 
-          {canAdd && (
+          {canAdd && !locked && (
             <button
               type="button"
               disabled={!item.category}
@@ -343,7 +344,8 @@ export default function ItemProductFields({
           value={skuValue}
           disabled={
             !item.category ||
-            Boolean(stockBlockReason)
+            Boolean(stockBlockReason) ||
+            locked
           }
           placeholder={
             item.category

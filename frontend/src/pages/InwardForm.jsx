@@ -7,6 +7,7 @@ import {
   Upload,
   Download,
   Plus,
+  Save,
   Trash2,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -37,7 +38,7 @@ import ItemProductFields, { ItemProductNotice } from "../components/ItemProductF
 import PartyNameField from "../components/PartyNameField";
 import { formatInwardType } from "../features/inward/inwardHelpers";
 import useSerialScanner from "../components/SerialScanner";
-import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, needsSerials, withSerialMode } from "../features/outward/serialHelpers";
+import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, partialSerialProblem, needsSerials, withSerialMode } from "../features/outward/serialHelpers";
 
 /*
  * Inward form:
@@ -204,6 +205,14 @@ export default function InwardForm() {
   // An entry saved before serial numbers existed (none saved) can still be edited without them.
 
   const [remarks, setRemarks] = useState("");
+  // COMPLETE (default) or PARTIAL. Partial: the items entered so far can be saved on their own (Save button in
+  // Item details) and are in stock straight away, so Sales can already see them. The entry is finished later.
+  const [entryMode, setEntryMode] = useState("COMPLETE");
+  // A new entry that was saved as partial: further saves update this entry instead of creating another one.
+  const [savedGrn, setSavedGrn] = useState(null);
+  const [savingPartial, setSavingPartial] = useState(false);
+  // Status the opened entry had when loaded ("" for a new entry).
+  const [loadedStatus, setLoadedStatus] = useState("");
   // Company the entry was saved with (matched by name once the company lists are loaded).
   const [pendingCompanyName, setPendingCompanyName] = useState("");
 
@@ -291,6 +300,14 @@ export default function InwardForm() {
         return;
       }
       const x = result.payload;
+      const status = String(x.entryStatus || "").toUpperCase() === "PARTIAL" ? "PARTIAL" : "COMPLETE";
+      // A completed entry is changed by Super Admin only; the warehouse team reopens PARTIAL entries.
+      if (status === "COMPLETE" && user?.role !== "SUPER_ADMIN") {
+        toast.error("This inward entry is complete. Only Super Admin can change it.");
+        navigate(`/inward/${editId}`, { replace: true });
+        return;
+      }
+      setLoadedStatus(status);
       if (x.warehouse) {
         dispatch(setSelectedWarehouse(x.warehouse));
         // The entry stores the company NAME; match it to one of the warehouse's companies.
@@ -315,13 +332,14 @@ export default function InwardForm() {
           setInwardDateTime(`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`);
         }
       }
+      setEntryMode(String(x.entryStatus || "").toUpperCase() === "PARTIAL" ? "PARTIAL" : "COMPLETE");
       setSupplierName(x.supplierName || "");
       setCompanyName(x.companyName || x.warehouse?.company?.name || "");
       const refs = Array.isArray(x.referenceDocuments) && x.referenceDocuments.length
         ? x.referenceDocuments
         : [{ refDocType: x.refDocType || "Invoice", refDocNumber: x.refDocNumber || "" }];
       setReferenceDocuments(refs.map((r) => ({ ...DEFAULT_REFERENCE(), refDocType: r.refDocType || "Invoice", refDocNumber: r.refDocNumber || "" })));
-      const loadedItems = (x.items || []).map((i) => ({ id: crypto.randomUUID(), category: i.category || "", companyName: i.companyName || "", sku: i.sku || "", quantity: String(i.quantity ?? ""), uom: i.uom || "Pcs" }));
+      const loadedItems = (x.items || []).map((i) => ({ id: crypto.randomUUID(), category: i.category || "", companyName: i.companyName || "", sku: i.sku || "", quantity: String(i.quantity ?? ""), uom: i.uom || "Pcs", savedQty: status === "PARTIAL" ? Number(i.quantity) || 0 : undefined }));
       setItems(loadedItems);
       setSerialValues(initialSerialValues(buildSerialLines(withSerialMode(loadedItems, products)), x.serials || []));
       setRemarks(x.remarks || "");
@@ -358,7 +376,16 @@ export default function InwardForm() {
     }
   }, [navigate, warehouseId, permissions.canInward]);
 
-  const submitting = createStatus === "loading";
+  const submitting = createStatus === "loading" || savingPartial;
+  // The entry being worked on: the one opened for editing, or the one a first partial save created.
+  const activeId = editId || savedGrn?.id || "";
+  const updating = Boolean(activeId);
+  const isPartialMode = entryMode === "PARTIAL";
+  // Items already saved on a partial entry are in stock: the warehouse team cannot delete or reduce them
+  // (they can add items / raise quantities). Super Admin can do everything.
+  const isLocked = (item) => !isSuperAdmin && item.savedQty != null;
+  // Complete <-> Partial switch: new entries, partial entries, and Super Admin. Not for a warehouse user on a completed entry.
+  const canSwitchMode = isSuperAdmin || !isEdit || loadedStatus === "PARTIAL";
   const anyDocUploading = Object.values(uploadingDocs || {}).some(Boolean);
 
   const updateReference = (id, field, value) => {
@@ -405,9 +432,9 @@ export default function InwardForm() {
     // staging the file until the whole form is submitted - same behaviour
     // as the detail page, and a slow/failed upload no longer blocks the
     // rest of the edit.
-    if (isEdit && editId) {
+    if (updating) {
       const category = doc.name?.trim() || doc.type;
-      dispatch(uploadInwardDocument({ grnId: editId, file, docCategory: category })).then((result) => {
+      dispatch(uploadInwardDocument({ grnId: activeId, file, docCategory: category })).then((result) => {
         if (uploadInwardDocument.fulfilled.match(result)) {
           const uploaded = result.payload.document;
           setDocuments((prev) =>
@@ -454,7 +481,7 @@ export default function InwardForm() {
     // (append " #2", " #3", ...) so a second copy of an already-uploaded
     // document doesn't collide with it.
     let finalName = name;
-    if (isEdit) {
+    if (updating) {
       const label = name.toLowerCase();
       const existingCount = documents.filter(
         (d) => d.documentId && String(d.name || d.type || "").trim().toLowerCase().startsWith(label)
@@ -554,6 +581,7 @@ export default function InwardForm() {
   const removeItem = (id) => {
     setItems((prev) => {
       if (prev.length === 1) return prev;
+      if (prev.some((item) => item.id === id && isLocked(item))) return prev;
       return prev.filter((item) => item.id !== id);
     });
   };
@@ -574,8 +602,9 @@ export default function InwardForm() {
     [referenceDocuments]
   );
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  // Saves the entry. mode = "COMPLETE" or "PARTIAL"; stay = true keeps the form open (Save button of a partial entry).
+  const persist = async (mode, { stay = false } = {}) => {
+    const partial = mode === "PARTIAL";
 
     if (!supplierName.trim()) {
       toast.error("Please enter supplier name.");
@@ -587,7 +616,16 @@ export default function InwardForm() {
       return;
     }
 
-    for (const item of items) {
+    // A partial save ignores rows that are completely empty; a complete submit checks every row.
+    const rowIsBlank = (item) => !item.category && !String(item.sku || "").trim() && !item.quantity;
+    const usableItems = partial ? items.filter((item) => !rowIsBlank(item)) : items;
+
+    if (partial && usableItems.length === 0) {
+      toast.error("Add at least one item (category, SKU / model and quantity) to save.");
+      return;
+    }
+
+    for (const item of usableItems) {
       if (!item.category) {
         toast.error("Please select a category for every item.");
         return;
@@ -602,11 +640,16 @@ export default function InwardForm() {
         toast.error("Please enter a valid quantity for every item.");
         return;
       }
+
+      if (isLocked(item) && Number(item.quantity) < item.savedQty) {
+        toast.error(`"${item.sku}" is already saved in stock (${item.savedQty}). You can increase the quantity but not reduce it.`);
+        return;
+      }
     }
 
-    // Every Pcs unit needs its own serial number (an item of 5 Pcs needs 5).
-    // Same rule when creating and when updating: a Required item must have all its serial numbers.
-    const serialError = serialProblem(serialLines, serialValues);
+    // Every Pcs unit needs its own serial number (an item of 5 Pcs needs 5) when the entry is completed.
+    // A partial save only refuses duplicates / too many serials - the rest can follow later.
+    const serialError = partial ? partialSerialProblem(serialLines, serialValues) : serialProblem(serialLines, serialValues);
     if (serialError) {
       toast.error(serialError);
       return;
@@ -644,6 +687,7 @@ export default function InwardForm() {
       inwardDateTime,
       supplierName: supplierName.trim(),
       companyName: companyName.trim(),
+      entryStatus: mode,
 
       refDocType: firstReference?.refDocType || "Other",
       refDocNumber: (firstReference?.refDocNumber || "").trim(),
@@ -653,7 +697,7 @@ export default function InwardForm() {
 
       remarks: remarks.trim() || undefined,
 
-      items: items.map((item) => ({
+      items: usableItems.map((item) => ({
         category: item.category,
         companyName: item.companyName?.trim() || undefined,
         sku: item.sku.trim(),
@@ -664,16 +708,18 @@ export default function InwardForm() {
       serials: serialPayload(serialLines, serialValues),
     };
 
-    const result = isEdit
-      ? await dispatch(updateInward({ id: editId, payload }))
+    if (stay) setSavingPartial(true);
+    const result = updating
+      ? await dispatch(updateInward({ id: activeId, payload }))
       : await dispatch(createInward(payload));
+    if (stay) setSavingPartial(false);
 
     // Check the thunk that was actually dispatched. Checking only createInward let a
     // failed updateInward through, so "updated successfully" showed with nothing saved.
-    const saveThunk = isEdit ? updateInward : createInward;
+    const saveThunk = updating ? updateInward : createInward;
     if (saveThunk.rejected.match(result)) {
       const err = result.payload || {};
-      const action = isEdit ? "update" : "create";
+      const action = updating ? "update" : "create";
 
       if (err.status === 403) {
         toast.error(err.message || `You are not authorized to ${action} this inward entry.`);
@@ -690,12 +736,13 @@ export default function InwardForm() {
     }
 
     const created = result.payload?.data || result.payload;
-    const grnId = created?.id || editId;
+    const grnId = created?.id || activeId;
     const grnNumber =
       created?.grnNumber ||
       created?.grn_number ||
       created?.grn?.grnNumber ||
-      (isEdit ? `GRN ${editId}` : "");
+      savedGrn?.number ||
+      (updating ? `GRN ${activeId}` : "");
 
     if (!grnId) {
       toast.error("GRN created but GRN ID was not returned by the server.");
@@ -705,14 +752,17 @@ export default function InwardForm() {
     }
 
     const selectedDocuments = documents.filter((doc) => doc.file && !doc.existing && (doc.type !== "Other" || doc.name.trim()));
-    const savedMessage = isEdit ? `GRN ${grnNumber} updated successfully.` : `GRN ${grnNumber} created successfully.`;
+    const savedMessage = partial
+      ? `GRN ${grnNumber} saved as partial. Its items are now in stock.`
+      : updating
+        ? `GRN ${grnNumber} updated successfully.`
+        : `GRN ${grnNumber} created successfully.`;
 
-    if (selectedDocuments.length > 0) {
-      // Go to the list straight away and upload the documents in the background,
-      // so the user isn't stuck on the form while files upload.
-      toast.success(`${savedMessage} Uploading ${selectedDocuments.length} document${selectedDocuments.length === 1 ? "" : "s"}...`);
+    // From now on this form works on the saved entry (a later Save / Submit updates it).
+    if (!updating) setSavedGrn({ id: grnId, number: grnNumber });
 
-      const categoryCounts = {};
+    const categoryCounts = {};
+    const uploadSelected = () =>
       Promise.all(
         selectedDocuments.map((doc) => {
           const label = doc.name?.trim() || doc.type;
@@ -725,10 +775,43 @@ export default function InwardForm() {
               file: doc.file,
               docCategory: buildDocCategory(label, categoryCounts[key]),
             })
-          );
+          ).then((r) => ({ doc, r }));
         })
-      ).then((uploadResults) => {
-        const failedCount = uploadResults.filter((r) => uploadInwardDocument.rejected.match(r)).length;
+      );
+
+    if (stay) {
+      // What is saved is now in stock: drop empty rows and mark the saved rows (see isLocked).
+      setItems(usableItems.map((item) => ({ ...item, savedQty: Number(item.quantity) })));
+      // Partial save: stay on the form. Upload the chosen documents now and mark them as saved.
+      if (selectedDocuments.length > 0) {
+        setSavingPartial(true);
+        const uploaded = await uploadSelected();
+        setSavingPartial(false);
+        const failed = uploaded.filter(({ r }) => uploadInwardDocument.rejected.match(r)).length;
+        setDocuments((prev) =>
+          prev.map((d) => {
+            const hit = uploaded.find(({ doc, r }) => doc.id === d.id && uploadInwardDocument.fulfilled.match(r));
+            return hit
+              ? { ...d, file: null, existing: true, documentId: hit.r.payload.document?.id, fileName: hit.r.payload.document?.fileName || hit.doc.file.name }
+              : d;
+          })
+        );
+        if (failed > 0) toast.warning(`${savedMessage} ${failed} document${failed === 1 ? "" : "s"} could not be uploaded - upload again.`);
+        else toast.success(savedMessage);
+      } else {
+        toast.success(savedMessage);
+      }
+      dispatch(resetCreateStatus());
+      return;
+    }
+
+    if (selectedDocuments.length > 0) {
+      // Go to the list straight away and upload the documents in the background,
+      // so the user isn't stuck on the form while files upload.
+      toast.success(`${savedMessage} Uploading ${selectedDocuments.length} document${selectedDocuments.length === 1 ? "" : "s"}...`);
+
+      uploadSelected().then((uploadResults) => {
+        const failedCount = uploadResults.filter(({ r }) => uploadInwardDocument.rejected.match(r)).length;
         if (failedCount > 0) {
           toast.warning(`GRN ${grnNumber}: ${failedCount} document${failedCount === 1 ? "" : "s"} could not be uploaded. Open the GRN to upload again.`);
         } else {
@@ -742,7 +825,14 @@ export default function InwardForm() {
     dispatch(resetCreateStatus());
     // replace (not push) so a successful save doesn't leave the edit
     // form sitting in browser history.
-    navigate(isEdit ? `/inward/${editId}` : "/inward", { replace: true });
+    navigate(updating ? `/inward/${grnId}` : "/inward", { replace: true });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Partial entries are saved with the Save button in Item details; Submit works only on Complete.
+    if (isPartialMode) return;
+    return persist("COMPLETE");
   };
 
   return (
@@ -759,10 +849,13 @@ export default function InwardForm() {
 
           <div>
             <h1 className="text-base font-semibold text-gray-900 md:text-lg">
-              {isEdit ? "Edit inward entry" : "New inward entry"}
+              {isEdit ? "Edit inward entry" : savedGrn ? `Inward entry ${savedGrn.number}` : "New inward entry"}
+              {isPartialMode && updating && (
+                <span className="ml-2 rounded-full bg-amber-100 px-2.5 py-0.5 align-middle text-[11px] font-semibold text-amber-700">Partial</span>
+              )}
             </h1>
             <p className="text-xs text-gray-400">
-              {isEdit ? "Update the prefilled inward details" : "GRN auto-generated on submit"}
+              {isEdit ? "Update the prefilled inward details" : savedGrn ? "Saved as partial - keep adding items, then complete it" : "GRN auto-generated on submit"}
             </p>
           </div>
         </div>
@@ -773,11 +866,11 @@ export default function InwardForm() {
             <h2 className="mb-4 text-sm font-semibold text-gray-900">Company & Warehouse</h2>
             {isSuperAdmin ? (
               <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2">
-                <div><label className={labelCls}>Company</label><div className="relative"><select value={selectedCompanyId} onChange={(e) => { const id = e.target.value; const company = topCompanyOptions.find((c) => c.id === id); setSelectedCompanyId(id); setCompanyName(company?.name || ""); dispatch(setSelectedWarehouse(null)); }} className={`${inputCls} appearance-none bg-white`}><option value="">Select company</option>{topCompanyOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div></div>
-                <div><label className={labelCls}>Warehouse</label><div className="relative"><select value={selectedWarehouse?.id || ""} disabled={!selectedCompanyId} onChange={(e) => { const warehouse = companyWarehouses.find((w) => w.id === e.target.value); dispatch(setSelectedWarehouse(warehouse || null)); }} className={`${inputCls} appearance-none bg-white disabled:bg-gray-100 disabled:text-gray-400`}><option value="">{selectedCompanyId ? "Select warehouse" : "Select company first"}</option>{companyWarehouses.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.code})</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div></div>
+                <div><label className={labelCls}>Company</label><div className="relative"><select value={selectedCompanyId} disabled={Boolean(savedGrn)} onChange={(e) => { const id = e.target.value; const company = topCompanyOptions.find((c) => c.id === id); setSelectedCompanyId(id); setCompanyName(company?.name || ""); dispatch(setSelectedWarehouse(null)); }} className={`${inputCls} appearance-none bg-white`}><option value="">Select company</option>{topCompanyOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div></div>
+                <div><label className={labelCls}>Warehouse</label><div className="relative"><select value={selectedWarehouse?.id || ""} disabled={!selectedCompanyId || Boolean(savedGrn)} onChange={(e) => { const warehouse = companyWarehouses.find((w) => w.id === e.target.value); dispatch(setSelectedWarehouse(warehouse || null)); }} className={`${inputCls} appearance-none bg-white disabled:bg-gray-100 disabled:text-gray-400`}><option value="">{selectedCompanyId ? "Select warehouse" : "Select company first"}</option>{companyWarehouses.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.code})</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div></div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2"><div><label className={labelCls}>Company</label>{eligibleCompanies.length > 1 ? (<div className="relative"><select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} className={`${inputCls} appearance-none bg-white`}><option value="">Select company</option>{eligibleCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div>) : (<div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{eligibleCompanies[0]?.name || selectedWarehouse?.company?.name || "Assigned company"}</div>)}</div><div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "Assigned warehouse"}</div></div></div>
+              <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2"><div><label className={labelCls}>Company</label>{eligibleCompanies.length > 1 ? (<div className="relative"><select value={selectedCompanyId} disabled={Boolean(savedGrn)} onChange={(e) => setSelectedCompanyId(e.target.value)} className={`${inputCls} appearance-none bg-white`}><option value="">Select company</option>{eligibleCompanies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" /></div>) : (<div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{eligibleCompanies[0]?.name || selectedWarehouse?.company?.name || "Assigned company"}</div>)}</div><div><label className={labelCls}>Warehouse</label><div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700">{selectedWarehouse?.name || "Assigned warehouse"}</div></div></div>
             )}
           </div>
 
@@ -944,6 +1037,52 @@ export default function InwardForm() {
               </button>
             </div>
 
+            {/* Partial / Complete (default Complete). Partial lets the items be saved into stock before the entry is finished. */}
+            {(canSwitchMode || isPartialMode) && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-black sm:text-sm">Entry type</span>
+                <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white" role="radiogroup" aria-label="Entry type">
+                  {[["COMPLETE", "Complete"], ["PARTIAL", "Partial"]].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={entryMode === value}
+                      disabled={submitting}
+                      onClick={() => setEntryMode(value)}
+                      className={`px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm ${
+                        entryMode === value
+                          ? value === "PARTIAL" ? "bg-amber-500 text-white" : "bg-gray-900 text-white"
+                          : "text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {isPartialMode && (
+                <button
+                  type="button"
+                  onClick={() => persist("PARTIAL", { stay: true })}
+                  disabled={submitting || anyDocUploading}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40 sm:text-sm"
+                >
+                  <Save size={15} />
+                  {savingPartial ? "Saving..." : updating ? "Save changes" : "Save items to stock"}
+                </button>
+              )}
+            </div>
+            )}
+            {isPartialMode && (
+              <p className="-mt-2 mb-4 text-xs text-gray-500">
+                Partial: click Save to put the items entered so far into stock - the sales team can see them straight away, without Submit.
+                Submit is disabled until you switch to Complete. Saved items cannot be deleted or reduced, but you can add more items.
+              </p>
+            )}
+
             <ItemProductNotice isAdmin={isSuperAdmin} canAdd={canAddProduct} />
 
             <div className="space-y-4">
@@ -957,7 +1096,7 @@ export default function InwardForm() {
                       Item {index + 1}
                     </p>
 
-                    {items.length > 1 && (
+                    {items.length > 1 && !isLocked(item) && (
                       <button
                         type="button"
                         onClick={() => removeItem(item.id)}
@@ -979,13 +1118,14 @@ export default function InwardForm() {
                       categoryClass="md:col-span-3"
                       skuClass="md:col-span-5"
                       canAdd={canAddProduct}
+                      locked={isLocked(item)}
                     />
 
                     <div className="md:col-span-2">
                       <label className={labelCls}>Quantity</label>
                       <input
                         type="number"
-                        min="1"
+                        min={isLocked(item) ? item.savedQty : 1}
                         value={item.quantity}
                         onChange={(e) =>
                           updateItem(item.id, "quantity", e.target.value)
@@ -1000,10 +1140,11 @@ export default function InwardForm() {
                       <div className="relative">
                         <select
                           value={item.uom}
+                          disabled={isLocked(item)}
                           onChange={(e) =>
                             updateItem(item.id, "uom", e.target.value)
                           }
-                          className={`${inputCls} appearance-none bg-white`}
+                          className={`${inputCls} appearance-none bg-white disabled:bg-gray-100 disabled:text-gray-400`}
                         >
                           <option>Pcs</option>
                           <option>Meters</option>
@@ -1172,10 +1313,15 @@ export default function InwardForm() {
 
           <button
             type="submit"
-            disabled={submitting || anyDocUploading}
+            disabled={submitting || anyDocUploading || isPartialMode}
+            title={isPartialMode ? "Switch to Complete to submit" : undefined}
             className="w-full rounded-lg bg-gray-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {submitting ? (isEdit ? "Updating inward..." : "Creating GRN...") : (isEdit ? "Update inward" : "Submit and generate GRN")}
+            {submitting
+              ? (updating ? "Updating inward..." : "Creating GRN...")
+              : isPartialMode
+                ? "Submit (select Complete to enable)"
+                : (updating ? (isEdit && loadedStatus !== "PARTIAL" ? "Update inward" : "Complete and submit") : "Submit and generate GRN")}
           </button>
         </form>
       </div>
