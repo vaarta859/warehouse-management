@@ -91,7 +91,10 @@ export default function InwardDetail() {
   const [deletingEntry, setDeletingEntry] = useState(false);
   // A partial entry opens straight in the form for the warehouse team (no Update button); Sales / Account only view it.
   // A manager who can delete / update entries stays on this page so the buttons are reachable.
-  const reopenPartial = userRole === "WAREHOUSE_MANAGER" && isPartialEntry && !inward?.permissions?.canDelete && !inward?.permissions?.canUpdate;
+  // Only trust the status once THIS page has loaded the entry: the store can still hold the entry as it was when
+  // the form opened it (PARTIAL), which would bounce a just-completed entry straight back into the form.
+  const [freshLoaded, setFreshLoaded] = useState(false);
+  const reopenPartial = freshLoaded && String(inward?.id) === String(id) && userRole === "WAREHOUSE_MANAGER" && isPartialEntry && !inward?.permissions?.canDelete && !inward?.permissions?.canUpdate;
   useEffect(() => {
     if (reopenPartial && inward?.id) navigate(`/inward/${inward.id}/edit`, { replace: true });
   }, [reopenPartial, inward?.id]);
@@ -107,7 +110,8 @@ export default function InwardDetail() {
   const addDocInputRef = useRef(null);
 
   useEffect(() => {
-    if (id) dispatch(fetchInwardById(id));
+    setFreshLoaded(false);
+    if (id) dispatch(fetchInwardById(id)).then((r) => { if (fetchInwardById.fulfilled.match(r)) setFreshLoaded(true); });
     return () => dispatch(clearCurrentInward());
   }, [dispatch, id]);
 
