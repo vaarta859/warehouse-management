@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearPersistedUiState } from "../features/shared/usePersistedState";
 const API_URL = import.meta.env?.VITE_API_URL || "http://localhost:4000";
 
 const apiClient = axios.create({
@@ -30,6 +31,7 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem("token");
+      clearPersistedUiState();
       localStorage.removeItem("user");
 
       if (onUnauthorized) {

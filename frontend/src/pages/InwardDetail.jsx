@@ -431,7 +431,7 @@ export default function InwardDetail() {
 
               {showDocumentMenu && (
                 <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
-                  {["Vendor invoice", "E-way bill", "Unloading sign-off sheet", "Other"].map((type) => (
+                  {["Vendor invoice", "E-way bill", "Delivery challan", "Other"].map((type) => (
                     <button
                       key={type}
                       type="button"

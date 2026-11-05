@@ -35,6 +35,82 @@ const DOCUMENT_MENU = ["E-way bill", "Invoice", "DC challan", "Bilty", "Other"];
 const refNumberLabel = (type) =>
   type === "E-way Bill" ? "E-way bill no." : type === "Invoice" ? "Invoice no." : type === "DC Challan" ? "Challan no." : type === "Bilty" ? "Bilty no." : "Reference doc no.";
 
+// Pick serial numbers from the stock one by one, or select all at once.
+function SerialPickerModal({ title, serials, initial, takenElsewhere, onApply, onClose }) {
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState(() => new Set(initial));
+
+  const available = useMemo(() => serials.filter((sn) => !takenElsewhere.has(sn.toLowerCase())), [serials, takenElsewhere]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? available.filter((sn) => sn.toLowerCase().includes(q)) : available;
+  }, [available, query]);
+
+  const toggle = (sn) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(sn)) next.delete(sn);
+      else next.add(sn);
+      return next;
+    });
+  // "Select all" works on what is listed, so a search narrows it (e.g. all serials starting with one prefix).
+  const allShownPicked = shown.length > 0 && shown.every((sn) => picked.has(sn));
+  const toggleShown = () =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      shown.forEach((sn) => (allShownPicked ? next.delete(sn) : next.add(sn)));
+      return next;
+    });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-gray-200 px-5 py-4">
+          <h3 className="text-sm font-semibold text-gray-900">Select serial numbers</h3>
+          <p className="mt-0.5 text-xs text-gray-500">{title} · {available.length} in stock</p>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search serial no."
+            className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          />
+          <div className="mt-3 flex items-center justify-between">
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-700">
+              <input type="checkbox" checked={allShownPicked} onChange={toggleShown} className="h-4 w-4" />
+              {query.trim() ? `Select all ${shown.length} shown` : `Select all (${shown.length})`}
+            </label>
+            <span className="text-xs font-semibold text-gray-700">{picked.size} selected</span>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto px-5 py-2">
+          {shown.length === 0 ? (
+            <p className="py-6 text-center text-sm text-gray-500">No serial numbers found.</p>
+          ) : (
+            shown.map((sn) => (
+              <label key={sn} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 py-2 last:border-0">
+                <input type="checkbox" checked={picked.has(sn)} onChange={() => toggle(sn)} className="h-4 w-4" />
+                <span className="font-mono text-xs text-gray-900">{sn}</span>
+              </label>
+            ))
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-5 py-3">
+          <button type="button" onClick={() => setPicked(new Set())} className="text-xs font-medium text-gray-600 hover:text-gray-900">Clear selection</button>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700">Cancel</button>
+            <button type="button" onClick={() => onApply([...picked])} className="rounded-lg bg-[#185FA5] px-4 py-2 text-xs font-semibold text-white">
+              Add {picked.size} serial no.
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Select({ label, value, onChange, disabled, placeholder, children }) {
   return (
     <div>
@@ -257,6 +333,24 @@ export default function StockTransferForm() {
     if (room <= 0) return toast.info("Every unit of this item already has a serial no.");
     addSerialsToRow(row, free.slice(0, room));
   };
+  // "Select": choose serial numbers from the stock list (one by one or all). The choice replaces the serials
+  // already picked from stock for this row; serials that were typed / scanned and are not in stock are kept.
+  const [pickerRowId, setPickerRowId] = useState(null);
+  const pickerRow = rows.find((r) => r.id === pickerRowId);
+  const applyPicked = (row, picked) => {
+    const info = rowInfo(row);
+    if (!info) return;
+    const stockSet = new Set(info.line.serialNos.map((x) => x.toLowerCase()));
+    const kept = filledOf(row).filter((x) => !stockSet.has(x.serialNo.toLowerCase()));
+    const chosen = sortSerials(picked).map((serialNo) => ({ serialNo, source: "MANUAL" }));
+    const merged = [...kept, ...chosen].slice(0, info.line.available);
+    // The quantity follows what was selected (never fewer units than serial numbers).
+    const quantity = merged.length ? merged.length : info.quantity;
+    setSerialValues((prev) => ({ ...prev, [keyOfRow(row)]: Array.from({ length: quantity }, (_, i) => merged[i] || emptySlot()) }));
+    if (quantity !== info.quantity) updateRow(row.id, { quantity: String(quantity) });
+    setPickerRowId(null);
+  };
+
   const clearSerials = (row) => setSerialValues((prev) => ({ ...prev, [keyOfRow(row)]: Array.from({ length: rowInfo(row)?.quantity || 0 }, emptySlot) }));
   const pasteSerials = (row, text) => {
     const info = rowInfo(row);
@@ -507,6 +601,11 @@ export default function StockTransferForm() {
                                     Fill from stock
                                   </button>
                                 )}
+                                {info.hasSerials && (
+                                  <button type="button" onClick={() => setPickerRowId(row.id)} className="rounded-md border border-blue-300 bg-white px-2.5 py-1 text-[11px] font-medium text-blue-700">
+                                    Select
+                                  </button>
+                                )}
                                 <button type="button" onClick={() => clearSerials(row)} className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-700">
                                   Clear
                                 </button>
@@ -544,6 +643,22 @@ export default function StockTransferForm() {
                 </div>
               )}
               {serial.camera}
+              {pickerRow && rowInfo(pickerRow)?.hasSerials && (() => {
+                const pInfo = rowInfo(pickerRow);
+                const mine = new Set(filledOf(pickerRow).map((x) => x.serialNo.toLowerCase()));
+                // serials already used by OTHER items can't be picked again here
+                const taken = new Set([...usedSerials].filter((sn) => !mine.has(sn)));
+                return (
+                  <SerialPickerModal
+                    title={`${pInfo.line.category} · ${pInfo.line.sku}`}
+                    serials={sortSerials(pInfo.line.serialNos)}
+                    initial={pInfo.line.serialNos.filter((sn) => mine.has(sn.toLowerCase()))}
+                    takenElsewhere={taken}
+                    onApply={(list) => applyPicked(pickerRow, list)}
+                    onClose={() => setPickerRowId(null)}
+                  />
+                );
+              })()}
             </section>
 
             {/* =============== REFERENCE DOCUMENTS =============== */}

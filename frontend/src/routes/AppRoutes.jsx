@@ -24,6 +24,7 @@ import {
   WarehouseManagement,
   CompanyManagement,
   StockLedger,
+  StockLedgerSerials,
   StockTransfers,
   StockTransferForm,
   ProductManagement,
@@ -95,6 +96,7 @@ const router = createBrowserRouter([
   // without the sidebar/navbar shell.
   // Stock transfer between companies: the form is for the Account team and Super Admin, the list is view-only for everyone who sees the ledger.
   { path: "/stock-ledger/transfer", element: fullScreen(<StockTransferForm />, ["SUPER_ADMIN", "ACCOUNT"]) },
+  { path: "/stock-ledger/serials", element: fullScreen(<StockLedgerSerials />, VIEW_ROLES) },
   { path: "/stock-ledger/transfers", element: fullScreen(<StockTransfers />, VIEW_ROLES) },
   { path: "/inward/create", element: fullScreen(<InwardForm />, INVENTORY_ROLES) },
   { path: "/inward/:id/edit", element: fullScreen(<InwardForm />, ["SUPER_ADMIN", "WAREHOUSE_MANAGER"]) },

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import usePersistedState, { useResetPageOnChange } from "../features/shared/usePersistedState";
 import { useDispatch, useSelector } from "react-redux";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowLeftRight, ChevronDown, PackageMinus, PackagePlus, Search, Warehouse } from "lucide-react";
 
 import { fetchWarehouses, selectWarehouses, selectSelectedWarehouse } from "../features/warehouse/warehouseSlice";
@@ -24,20 +25,30 @@ function formatByUom(byUom, fallback = 0) {
   return entries.map(([uom, qty]) => `${formatNumber(qty)} ${uom}`).join(" · ");
 }
 
-function TotalCard({ icon: Icon, iconClass, label, value }) {
+const CARD_TONES = {
+  purple: { card: "border-purple-200 bg-gradient-to-br from-purple-100 via-purple-50 to-white", icon: "bg-purple-600 text-white", label: "text-purple-700", value: "text-purple-900" },
+  green: { card: "border-green-200 bg-gradient-to-br from-green-100 via-emerald-50 to-white", icon: "bg-green-600 text-white", label: "text-green-700", value: "text-green-900" },
+  amber: { card: "border-amber-200 bg-gradient-to-br from-amber-100 via-orange-50 to-white", icon: "bg-amber-500 text-white", label: "text-amber-700", value: "text-amber-900" },
+};
+
+function TotalCard({ icon: Icon, tone = "purple", label, value }) {
+  const t = CARD_TONES[tone];
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div className={`rounded-xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${t.card}`}>
       <div className="flex items-center justify-between">
-        <p className="text-xs text-gray-500">{label}</p>
-        <Icon size={17} className={iconClass} />
+        <p className={`text-xs font-semibold ${t.label}`}>{label}</p>
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.icon}`}>
+          <Icon size={16} />
+        </span>
       </div>
-      <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
+      <p className={`mt-2 text-2xl font-bold ${t.value}`}>{value}</p>
     </div>
   );
 }
 
 export default function StockLedger() {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
 
   const warehouses = useSelector(selectWarehouses);
   const user = useSelector((state) => state.auth.user);
@@ -53,14 +64,14 @@ export default function StockLedger() {
   const error = useSelector(selectStockLedgerError);
   const loading = status === "loading";
 
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [stockType, setStockType] = useState(""); // "" = all stock types (New / Service / Return / Faulty / Repair)
+  const [search, setSearch] = usePersistedState("ledger.search", "");
+  const [page, setPage] = usePersistedState("ledger.page", 1);
+  const [stockType, setStockType] = usePersistedState("ledger.stockType", ""); // "" = all stock types (New / Service / Return / Faulty / Repair)
 
   // Company -> warehouse. Both empty = total stock across everything the user
   // can see. These are local to this page (they don't change the navbar's warehouse).
-  const [companyId, setCompanyId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
+  const [companyId, setCompanyId] = usePersistedState("ledger.companyId", "");
+  const [warehouseId, setWarehouseId] = usePersistedState("ledger.warehouseId", "");
 
   // The server already limits this list by role (a manager only gets the
   // warehouses they manage), so the dropdowns can't offer anything off-limits.
@@ -132,9 +143,7 @@ export default function StockLedger() {
   };
 
   // Reset to page 1 whenever the search term changes.
-  useEffect(() => {
-    setPage(1);
-  }, [search]);
+  useResetPageOnChange(JSON.stringify([search]), () => setPage(1));
 
   // Debounce search so every keystroke doesn't fire a request. Always loads:
   // with no company / warehouse chosen it is the total stock.
@@ -157,9 +166,16 @@ export default function StockLedger() {
   }, [dispatch, isManager, scopeWarehouseId, scopeCompanyId, stockType, search, page]);
 
   // Switching warehouse in the navbar starts again from page 1.
-  useEffect(() => {
-    setPage(1);
-  }, [navbarWarehouse?.id]);
+  useResetPageOnChange(JSON.stringify([navbarWarehouse?.id]), () => setPage(1));
+
+  // A ledger row opens the serial numbers of that item (scoped to the row's company / warehouse / stock type).
+  const openSerials = (row) => {
+    const q = new URLSearchParams({ category: row.category || "", sku: row.sku || "" });
+    if (row.companyName) q.set("companyName", row.companyName);
+    if (row.warehouseId) q.set("warehouseId", row.warehouseId);
+    if (row.stockType) q.set("stockType", row.stockType);
+    navigate(`/stock-ledger/serials?${q.toString()}`);
+  };
 
   const selectCls =
     "w-full appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400";
@@ -193,7 +209,7 @@ export default function StockLedger() {
       ================================================= */}
 
       <div className="mx-auto max-w-5xl">
-        <Link to="/reports" className="mb-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700">
+        <Link to="/reports" replace className="mb-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700">
           <ArrowLeft size={14} />
           Back to Reports
         </Link>
@@ -205,6 +221,12 @@ export default function StockLedger() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/stock-ledger/serials"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Search serial no.
+          </Link>
           <Link
             to="/stock-ledger/transfers"
             className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
@@ -289,19 +311,19 @@ export default function StockLedger() {
             <div className="mb-6 grid grid-cols-3 gap-3 sm:gap-4">
               <TotalCard
                 icon={Warehouse}
-                iconClass="text-purple-600"
+                tone="purple"
                 label="Current Stock"
                 value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.currentStock])), totals?.currentStock)}
               />
               <TotalCard
                 icon={PackagePlus}
-                iconClass="text-green-600"
+                tone="green"
                 label="Total Inward (all-time)"
                 value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.totalInward])), totals?.totalInward)}
               />
               <TotalCard
                 icon={PackageMinus}
-                iconClass="text-amber-600"
+                tone="amber"
                 label="Total Outward (all-time)"
                 value={loading && !totals ? "—" : formatByUom(Object.fromEntries(Object.entries(totals?.byUom || {}).map(([u, t]) => [u, t.totalOutward])), totals?.totalOutward)}
               />
@@ -345,7 +367,7 @@ export default function StockLedger() {
               {!loading && rows.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="mobile-cards w-full min-w-0 text-left">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50">
                       <tr>
                         <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Category</th>
                         <th className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-tight text-gray-500">Model / SKU</th>
@@ -362,7 +384,12 @@ export default function StockLedger() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {rows.map((row) => (
-                        <tr key={`${row.companyName}-${row.warehouseId}-${row.category}-${row.sku}-${row.stockType}`}>
+                        <tr
+                          key={`${row.companyName}-${row.warehouseId}-${row.category}-${row.sku}-${row.stockType}`}
+                          onClick={() => openSerials(row)}
+                          className="cursor-pointer hover:bg-blue-50/60"
+                          title="Open serial numbers"
+                        >
                           <td className="px-2 py-2.5 text-[11px] text-gray-700">{row.category}</td>
                           <td className="px-2 py-2.5 text-[11px] font-medium text-gray-800">{row.sku}</td>
                           <td data-label="Company" className="px-2 py-2.5 text-[11px] text-gray-700">{row.companyName || "-"}</td>

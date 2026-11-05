@@ -1,4 +1,5 @@
 
+import { clearPersistedUiState } from "../features/shared/usePersistedState";
 import {
   Building2,
   FileBarChart,
@@ -100,6 +101,7 @@ export default function Sidebar({
 
   const signOut = () => {
     localStorage.removeItem("token");
+    clearPersistedUiState();
     localStorage.removeItem("user");
 
     navigate("/", {

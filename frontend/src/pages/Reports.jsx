@@ -254,9 +254,9 @@ function formatByUom(byUom, fallback = 0) {
   return entries.map(([uom, qty]) => `${formatNumber(qty)} ${uom}`).join(" · ");
 }
 
-function StatCard({ icon: Icon, iconClass, label, value, note, full }) {
+function StatCard({ icon: Icon, iconClass, tone, label, value, note, full }) {
   return (
-    <div className={`rounded-xl border border-gray-200 bg-white p-4 ${full ? "col-span-2" : ""}`}>
+    <div className={`rounded-xl border p-4 ${tone} ${full ? "col-span-2" : ""}`}>
       <div className="flex items-center justify-between">
         <p className="text-xs text-gray-500">{label}</p>
         <Icon size={17} className={iconClass} />
@@ -353,16 +353,16 @@ export default function Reports() {
 
         <Link
           to="/stock-ledger"
-          className="mb-6 flex items-center gap-3.5 rounded-xl border border-gray-200 bg-white p-4 transition hover:border-gray-300"
+          className="mb-6 flex items-center gap-3.5 rounded-xl border border-orange-200 bg-orange-50 p-4 transition hover:border-orange-300"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-500">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-orange-500">
             <ClipboardList size={19} />
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-gray-900">Stock Ledger Summary</h3>
             <p className="text-xs text-gray-500">View stock levels, inwards and outwards with detailed ledger.</p>
           </div>
-          <ChevronRight size={17} className="shrink-0 text-amber-500" />
+          <ChevronRight size={17} className="shrink-0 text-orange-500" />
         </Link>
 
         {/* =================================================
@@ -388,6 +388,7 @@ export default function Reports() {
             full
             icon={Warehouse}
             iconClass="text-purple-600"
+            tone="border-purple-200 bg-purple-50"
             label="Total Stock"
             value={loadingSummary ? "—" : formatByUom(summary?.stockByUom, summary?.totalStock)}
             note="on hand"
@@ -396,6 +397,7 @@ export default function Reports() {
           <StatCard
             icon={Repeat}
             iconClass="text-blue-600"
+            tone="border-sky-200 bg-sky-50"
             label="Total Transactions"
             value={loadingSummary ? "—" : formatNumber(summary?.totalTransactions)}
             note="in this period"
@@ -403,6 +405,7 @@ export default function Reports() {
           <StatCard
             icon={PackagePlus}
             iconClass="text-green-600"
+            tone="border-emerald-200 bg-emerald-50"
             label="Total Inwards"
             value={loadingSummary ? "—" : formatByUom(summary?.inwardByUom, summary?.totalInwardUnits)}
             note="received"
@@ -411,6 +414,7 @@ export default function Reports() {
           <StatCard
             icon={PackageMinus}
             iconClass="text-amber-600"
+            tone="border-amber-200 bg-amber-50"
             label="Total Outwards"
             value={loadingSummary ? "—" : formatByUom(summary?.outwardByUom, summary?.totalOutwardUnits)}
             note="issued"
@@ -418,6 +422,7 @@ export default function Reports() {
           <StatCard
             icon={FileWarning}
             iconClass="text-pink-600"
+            tone="border-pink-200 bg-pink-50"
             label="Documents Pending"
             value={loadingSummary ? "—" : formatNumber(summary?.documentsPending)}
             note={
@@ -433,8 +438,8 @@ export default function Reports() {
         ================================================= */}
 
         <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Recent ledger entries</p>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+        <div className="overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50/60">
+          <div className="flex items-center justify-between border-b border-indigo-200 px-5 py-4">
             <h3 className="text-sm font-semibold text-gray-900">Latest Transactions</h3>
             <Link to="/inward" className="text-xs font-semibold text-[#185FA5] hover:underline">
               Open full ledger

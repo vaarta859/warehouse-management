@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import usePersistedState, { useResetPageOnChange } from "../features/shared/usePersistedState";
 import { useSelector } from "react-redux";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Search, ArrowLeftRight, Download, Eye, FileText, Upload } from "lucide-react";
@@ -158,10 +159,10 @@ export default function StockTransfers() {
   const user = useSelector((state) => state.auth.user);
   const canTransfer = user?.role === "ACCOUNT" || user?.role === "SUPER_ADMIN";
 
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = usePersistedState("transfers.search", "");
+  const [dateFrom, setDateFrom] = usePersistedState("transfers.dateFrom", "");
+  const [dateTo, setDateTo] = usePersistedState("transfers.dateTo", "");
+  const [page, setPage] = usePersistedState("transfers.page", 1);
 
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState(null);
@@ -169,7 +170,7 @@ export default function StockTransfers() {
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState(null);
 
-  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo]);
+  useResetPageOnChange(JSON.stringify([search, dateFrom, dateTo]), () => setPage(1));
 
   useEffect(() => {
     let alive = true;

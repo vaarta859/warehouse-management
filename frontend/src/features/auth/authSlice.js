@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import { clearPersistedUiState } from "../shared/usePersistedState";
 import apiClient from "../../services/apiClient";
 
 const readStoredUser = () => {
@@ -186,6 +187,7 @@ const authSlice = createSlice({
       state.error = null;
       state.usersError = null;
       localStorage.removeItem("token");
+      clearPersistedUiState();
       localStorage.removeItem("user");
     },
     sessionExpired: (state, action) => {
@@ -196,6 +198,7 @@ const authSlice = createSlice({
       // e.g. "Your account has been deactivated..." shown on the login page
       state.error = typeof action.payload === "string" ? action.payload : null;
       localStorage.removeItem("token");
+      clearPersistedUiState();
       localStorage.removeItem("user");
     },
     clearAuthError: (state) => {

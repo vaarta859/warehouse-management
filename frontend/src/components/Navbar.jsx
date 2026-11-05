@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { clearPersistedUiState } from "../features/shared/usePersistedState";
 import {
   MapPin,
   Package,
@@ -24,6 +25,7 @@ function Navbar({ location = "Delhi Warehouse" }) {
 
   const handleSignOut = () => {
     localStorage.removeItem("token");
+    clearPersistedUiState();
     localStorage.removeItem("user");
     navigate("/", { replace: true });
   };

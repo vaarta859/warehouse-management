@@ -7,7 +7,7 @@
 export const REQUIRED_DOCUMENTS = [
   "Vendor invoice",
   "E-way bill",
-  "Unloading sign-off sheet",
+  "Delivery challan",
 ];
 
 export function formatInwardType(type) {

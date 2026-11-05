@@ -1,4 +1,5 @@
 import FilterSelect from "../components/FilterSelect";
+import usePersistedState, { useResetPageOnChange } from "../features/shared/usePersistedState";
 import useSummaryEntries from "../features/shared/useSummaryEntries";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -326,16 +327,16 @@ export default function Outward() {
   const pagination = useSelector(selectOutwardListPagination);
   const loading = listStatus === "loading";
 
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState("All types");
-  const [showPendingOnly, setShowPendingOnly] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [search, setSearch] = usePersistedState("outward.search", "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => search.trim());
+  const [activeFilter, setActiveFilter] = usePersistedState("outward.activeFilter", "All types");
+  const [showPendingOnly, setShowPendingOnly] = usePersistedState("outward.showPendingOnly", false);
+  const [statusFilter, setStatusFilter] = usePersistedState("outward.statusFilter", "");
 
   // Date range filter - defaults to the last 7 days.
-  const [datePreset, setDatePreset] = useState("all");
-  const [dateRange, setDateRange] = useState(() => getPresetRange("all"));
-  const [page, setPage] = useState(1);
+  const [datePreset, setDatePreset] = usePersistedState("outward.datePreset", "all");
+  const [dateRange, setDateRange] = usePersistedState("outward.dateRange", () => getPresetRange("all"));
+  const [page, setPage] = usePersistedState("outward.page", 1);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), SEARCH_DEBOUNCE_MS);
@@ -343,9 +344,7 @@ export default function Outward() {
   }, [search]);
 
   // Any filter change starts back at page 1.
-  useEffect(() => {
-    setPage(1);
-  }, [scopedWarehouseId, debouncedSearch, activeFilter, statusFilter, datePreset, dateRange.from, dateRange.to]);
+  useResetPageOnChange(JSON.stringify([scopedWarehouseId, debouncedSearch, activeFilter, statusFilter, datePreset, dateRange.from, dateRange.to]), () => setPage(1));
 
   const handleDatePresetSelect = (preset) => {
     setDatePreset(preset);
@@ -715,14 +714,35 @@ export default function Outward() {
   );
 }
 
+const CARD_TONES = {
+  blue: { card: "border-blue-200 bg-gradient-to-br from-blue-100 via-sky-50 to-white", icon: "bg-blue-600 text-white", label: "text-blue-700", value: "text-blue-900" },
+  purple: { card: "border-purple-200 bg-gradient-to-br from-purple-100 via-fuchsia-50 to-white", icon: "bg-purple-600 text-white", label: "text-purple-700", value: "text-purple-900" },
+  green: { card: "border-green-200 bg-gradient-to-br from-green-100 via-emerald-50 to-white", icon: "bg-green-600 text-white", label: "text-green-700", value: "text-green-900" },
+  amber: { card: "border-amber-200 bg-gradient-to-br from-amber-100 via-orange-50 to-white", icon: "bg-amber-500 text-white", label: "text-amber-700", value: "text-amber-900" },
+  red: { card: "border-red-200 bg-gradient-to-br from-red-100 via-rose-50 to-white", icon: "bg-red-500 text-white", label: "text-red-700", value: "text-red-800" },
+};
+
+// Colour by meaning: totals blue, today purple, waiting amber, done green, problems (danger) red.
+function toneOf(title, danger) {
+  if (danger) return "red";
+  const t = String(title).toLowerCase();
+  if (t.includes("today")) return "purple";
+  if (t.includes("pending") || t.includes("awaiting")) return "amber";
+  if (t.includes("completed") || t.includes("dispatched")) return "green";
+  return "blue";
+}
+
 function SummaryCard({ title, value, icon: Icon, danger = false }) {
+  const t = CARD_TONES[toneOf(title, danger)];
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-2.5 sm:p-4">
+    <div className={`rounded-xl border p-2.5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:p-4 ${t.card}`}>
       <div className="flex items-center justify-between gap-1">
-        <p className="truncate text-[10px] font-medium text-gray-500 sm:text-xs">{title}</p>
-        <Icon size={15} className={`shrink-0 ${danger ? "text-red-500" : "text-blue-500"}`} />
+        <p className={`truncate text-[10px] font-semibold sm:text-xs ${t.label}`}>{title}</p>
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg sm:h-8 sm:w-8 ${t.icon}`}>
+          <Icon size={14} />
+        </span>
       </div>
-      <p className={`mt-1.5 text-lg font-bold sm:mt-2 sm:text-xl ${danger ? "text-red-600" : "text-gray-900"}`}>{value}</p>
+      <p className={`mt-1.5 text-lg font-bold sm:mt-2 sm:text-2xl ${t.value}`}>{value}</p>
     </div>
   );
 }

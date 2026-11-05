@@ -4,6 +4,7 @@ import Navbar from "./Navbar";
 import Sidebar from "./Sidebar";
 import RouteFallback from "./RouteFallback";
 import { prefetchRoute } from "../routes/lazyPages";
+import { forgetPersistedState } from "../features/shared/usePersistedState";
 
 // Derives which sidebar/bottom-nav item should be highlighted
 // from the actual URL, instead of local component state - this
@@ -12,7 +13,8 @@ import { prefetchRoute } from "../routes/lazyPages";
 function getActiveKey(pathname) {
   if (pathname.startsWith("/inward")) return "inward";
   if (pathname.startsWith("/outward")) return "outward";
-  if (pathname.startsWith("/reports")) return "reports";
+  // The Stock Ledger (and its serial / transfer pages) is opened from Reports, so Reports stays highlighted.
+  if (pathname.startsWith("/reports") || pathname.startsWith("/stock-ledger")) return "reports";
   if (pathname.startsWith("/companies")) return "companies";
   if (pathname.startsWith("/products")) return "products";
   if (pathname.startsWith("/allusers")) return "allusers";
@@ -20,12 +22,53 @@ function getActiveKey(pathname) {
   return "dashboard";
 }
 
+// Where Back goes from each main page, whatever route led there:
+// Stock Ledger -> Reports, Reports / Inward / Outward / the admin pages -> Dashboard.
+const BACK_PARENT = {
+  "/stock-ledger": "/reports",
+  "/reports": "/dashboard",
+  "/inward": "/dashboard",
+  "/outward": "/dashboard",
+  "/companies": "/dashboard",
+  "/products": "/dashboard",
+  "/allusers": "/dashboard",
+  "/warehousemanagement": "/dashboard",
+};
+
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
   const active = getActiveKey(location.pathname);
   const mainRef = useRef(null);
+
+  // Browser / phone Back from a main page goes to its parent page (see BACK_PARENT), not to whatever page
+  // happened to be open before it. Detail pages (an inward / outward entry) still go back to where they came from.
+  const norm = (path) => path.replace(/\/+$/, "") || "/";
+  const lastPath = useRef(norm(location.pathname)); // page shown now
+  const prevPath = useRef(null); // page shown before it
+  useEffect(() => {
+    const now = norm(location.pathname);
+    if (lastPath.current !== now) {
+      prevPath.current = lastPath.current;
+      lastPath.current = now;
+    }
+  }, [location.pathname]);
+  useEffect(() => {
+    const onPop = () => {
+      // React may already have rendered the page we went back to when this runs (then lastPath is the new page and
+      // prevPath the one we left), or not yet (then lastPath is still the page we left).
+      const arrived = norm(window.location.pathname);
+      const left = arrived === lastPath.current ? prevPath.current : lastPath.current;
+      const target = BACK_PARENT[left];
+      if (!target) return;
+      setTimeout(() => {
+        if (norm(window.location.pathname) !== target) navigate(target, { replace: true });
+      }, 0);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [navigate]);
 
   // Tables marked "mobile-cards" turn into stacked cards on phones (see index.css);
   // each cell gets its column heading as data-label so the card shows "Heading: value".
@@ -65,13 +108,17 @@ export default function AppLayout() {
     return () => clearTimeout(id);
   }, []);
 
-  // Back from any main page (Inward, Outward, Reports...) should land on the
-  // Dashboard. So opening a page FROM the dashboard adds a history entry, but
-  // switching between pages from the sidebar replaces the current one - the
-  // entry just below it stays the dashboard.
+  // Back from a main page (Inward, Outward, Reports...) opened from the Dashboard lands on the Dashboard:
+  // switching between those main pages from the sidebar replaces the current entry, so the entry below it
+  // stays the Dashboard. Only a main page itself is replaced - a page opened from it (Stock Ledger, serial
+  // list, an inward / outward detail) stays in the history, so Back from the next page returns to it.
   const handleNavigate = (key) => {
     if (`/${key}` === location.pathname) return;
-    navigate(`/${key}`, { replace: active !== "dashboard" });
+    // Opening Inward / Outward from the sidebar shows the newest entries (page 1). The page, search and filters
+    // are still remembered when coming BACK from an entry, because that doesn't go through the sidebar.
+    if (key === "inward" || key === "outward") forgetPersistedState(`${key}.page`);
+    const onMainPage = active !== "dashboard" && location.pathname === `/${active}`;
+    navigate(`/${key}`, { replace: onMainPage });
   };
 
   return (

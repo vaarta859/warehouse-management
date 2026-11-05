@@ -60,7 +60,7 @@ const DEFAULT_REFERENCE = () => ({
 const DEFAULT_DOCUMENTS = [
   { id: crypto.randomUUID(), type: "Invoice", name: "Vendor invoice", file: null, isDefault: true },
   { id: crypto.randomUUID(), type: "E-way Bill", name: "E-way bill", file: null, isDefault: true },
-  { id: crypto.randomUUID(), type: "Other", name: "Unloading sign-off sheet", file: null, isDefault: true },
+  { id: crypto.randomUUID(), type: "Other", name: "Delivery challan", file: null, isDefault: true },
 ];
 
 // Rebuilds the documents list for the form: the three compulsory document
@@ -137,7 +137,7 @@ const getDateTimeLocal = () => {
 // Builds the docCategory string sent to the backend for a document
 // uploaded from this form. This MUST line up exactly (case-insensitively)
 // with the labels InwardDetail.jsx and inwardHelpers.js use to match
-// "required" documents ("Vendor invoice" / "E-way bill" / "Unloading
+// "required" documents ("Vendor invoice" / "E-way bill" / "Delivery
 // sign-off sheet") — otherwise every upload lands in "Additional
 // documents" instead of its proper slot, and the Complete/Pending status
 // never reflects what was actually uploaded. For the first document of
@@ -299,7 +299,7 @@ export default function InwardForm() {
     dispatch(fetchInwardById(editId)).then((result) => {
       if (!fetchInwardById.fulfilled.match(result)) {
         toast.error(result.payload || "Unable to load inward entry.");
-        navigate("/inward");
+        navigate("/inward", { replace: true });
         return;
       }
       const x = result.payload;
@@ -376,7 +376,7 @@ export default function InwardForm() {
 
   useEffect(() => {
     if (warehouseId && !permissions.canInward && !isEdit) {
-      navigate("/inward");
+      navigate("/inward", { replace: true });
     }
   }, [navigate, warehouseId, permissions.canInward]);
 
@@ -473,7 +473,7 @@ export default function InwardForm() {
     let name = type;
     if (type === "Vendor invoice") name = "Vendor invoice";
     if (type === "E-way bill") name = "E-way bill";
-    if (type === "Unloading sign-off sheet") name = "Unloading sign-off sheet";
+    if (type === "Delivery challan") name = "Delivery challan";
     if (type === "Other") {
       name = await promptName("Name this document", { label: "Document name", placeholder: "e.g. GST certificate" });
       if (!name?.trim()) return;
@@ -513,7 +513,7 @@ export default function InwardForm() {
     const doc = documents.find((d) => d.id === id);
     if (!doc) return;
 
-    // A compulsory document (Vendor invoice / E-way bill / Unloading
+    // A compulsory document (Vendor invoice / E-way bill / Delivery
     // sign-off sheet) never disappears on delete - only its upload is
     // cleared so the slot stays and can be uploaded to again. Only extra
     // documents the user added (a duplicate or a custom "Other" one) are
@@ -752,7 +752,7 @@ export default function InwardForm() {
     if (!grnId) {
       toast.error("GRN created but GRN ID was not returned by the server.");
       dispatch(resetCreateStatus());
-      navigate("/inward");
+      navigate("/inward", { replace: true });
       return;
     }
 
@@ -1238,7 +1238,7 @@ export default function InwardForm() {
                     {[
                       ["Vendor invoice", "Vendor invoice"],
                       ["E-way bill", "E-way bill"],
-                      ["Unloading sign-off sheet", "Unloading sign-off sheet"],
+                      ["Delivery challan", "Delivery challan"],
                       ["Other", "Other"],
                     ].map(([value, label]) => (
                       <button
@@ -1415,7 +1415,7 @@ export default function InwardForm() {
 // const DEFAULT_DOCUMENTS = [
 //   { id: crypto.randomUUID(), type: "Invoice", name: "Vendor invoice", file: null, isDefault: true },
 //   { id: crypto.randomUUID(), type: "E-way Bill", name: "E-way bill", file: null, isDefault: true },
-//   { id: crypto.randomUUID(), type: "Other", name: "Unloading sign-off sheet", file: null, isDefault: true },
+//   { id: crypto.randomUUID(), type: "Other", name: "Delivery challan", file: null, isDefault: true },
 // ];
 
 // // Rebuilds the documents list for the form: the three compulsory document
@@ -1485,7 +1485,7 @@ export default function InwardForm() {
 // // Builds the docCategory string sent to the backend for a document
 // // uploaded from this form. This MUST line up exactly (case-insensitively)
 // // with the labels InwardDetail.jsx and inwardHelpers.js use to match
-// // "required" documents ("Vendor invoice" / "E-way bill" / "Unloading
+// // "required" documents ("Vendor invoice" / "E-way bill" / "Delivery
 // // sign-off sheet") — otherwise every upload lands in "Additional
 // // documents" instead of its proper slot, and the Complete/Pending status
 // // never reflects what was actually uploaded. For the first document of
@@ -1707,7 +1707,7 @@ export default function InwardForm() {
 //     let name = type;
 //     if (type === "Vendor invoice") name = "Vendor invoice";
 //     if (type === "E-way bill") name = "E-way bill";
-//     if (type === "Unloading sign-off sheet") name = "Unloading sign-off sheet";
+//     if (type === "Delivery challan") name = "Delivery challan";
 //     if (type === "Other") {
 //       name = window.prompt("Enter document name");
 //       if (!name?.trim()) return;
@@ -1747,7 +1747,7 @@ export default function InwardForm() {
 //     const doc = documents.find((d) => d.id === id);
 //     if (!doc) return;
 
-//     // A compulsory document (Vendor invoice / E-way bill / Unloading
+//     // A compulsory document (Vendor invoice / E-way bill / Delivery
 //     // sign-off sheet) never disappears on delete - only its upload is
 //     // cleared so the slot stays and can be uploaded to again. Only extra
 //     // documents the user added (a duplicate or a custom "Other" one) are
@@ -2317,7 +2317,7 @@ export default function InwardForm() {
 //                     {[
 //                       ["Vendor invoice", "Vendor invoice"],
 //                       ["E-way bill", "E-way bill"],
-//                       ["Unloading sign-off sheet", "Unloading sign-off sheet"],
+//                       ["Delivery challan", "Delivery challan"],
 //                       ["Other", "Other"],
 //                     ].map(([value, label]) => (
 //                       <button

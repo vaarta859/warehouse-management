@@ -320,7 +320,7 @@ export default function OutwardForm() {
     dispatch(fetchOutwardById(editId)).then((result) => {
       if (!fetchOutwardById.fulfilled.match(result)) {
         toast.error(result.payload || "Unable to load outward entry.");
-        navigate("/outward");
+        navigate("/outward", { replace: true });
         return;
       }
       const x = result.payload;

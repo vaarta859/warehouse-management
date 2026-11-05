@@ -31,7 +31,7 @@ import { validateInwardSerials, replaceGrnSerials, pruneGrnSerials, findInwardSe
 const REQUIRED_DOCUMENTS = [
   "Vendor invoice",
   "E-way bill",
-  "Unloading sign-off sheet",
+  "Delivery challan",
 ];
  
 // An inward entry is COMPLETE by default. The warehouse can also save it as PARTIAL (from the item details):
