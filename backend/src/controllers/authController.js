@@ -422,6 +422,127 @@ export async function me(req, res) {
 }
 
 // =====================================================
+// GET /api/auth/profile
+// Protected
+//
+// Everything the Profile page shows: name, email, role (department),
+// the companies the user belongs to and the warehouses they can access.
+// =====================================================
+
+export async function getProfile(req, res) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        companyId: true,
+        companies: USER_COMPANIES_SELECT,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Super admins are not limited to particular warehouses.
+    const access =
+      user.role === "SUPER_ADMIN"
+        ? []
+        : await prisma.warehouseAccess.findMany({
+            where: { userId: user.id },
+            select: {
+              warehouse: {
+                select: { id: true, name: true, code: true, city: true, state: true },
+              },
+            },
+          });
+
+    return res.json({
+      user: shapeUser(user),
+      warehouses: access.map((a) => a.warehouse).filter(Boolean),
+    });
+  } catch (error) {
+    console.error("Get profile error:", error);
+
+    return res.status(500).json({
+      message: "Something went wrong while loading your profile",
+    });
+  }
+}
+
+// =====================================================
+// POST /api/auth/change-password
+// Protected
+//
+// body: { currentPassword, newPassword, confirmPassword }
+// =====================================================
+
+export async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        message: "Current password, new password and confirm password are required",
+      });
+    }
+
+    if (typeof newPassword !== "string" || newPassword.length < 8) {
+      return res.status(400).json({
+        message: "New password must be at least 8 characters",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        message: "New password and confirm password do not match",
+      });
+    }
+
+    if (newPassword === currentPassword) {
+      return res.status(400).json({
+        message: "New password must be different from the current password",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, passwordHash: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const matches = await bcrypt.compare(String(currentPassword), user.passwordHash);
+
+    if (!matches) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+    });
+
+    invalidateCachedUser(user.id);
+
+    return res.json({ message: "Password changed successfully" });
+  } catch (error) {
+    console.error("Change password error:", error);
+
+    return res.status(500).json({
+      message: "Something went wrong while changing your password",
+    });
+  }
+}
+
+// =====================================================
 // PATCH /api/users/:id/role
 // Protected + SUPER_ADMIN
 //

@@ -28,6 +28,7 @@ import {
   StockTransfers,
   StockTransferForm,
   ProductManagement,
+  Profile,
 } from "./lazyPages";
 
 // Full-screen flows have no shell around them, so they get their own
@@ -88,6 +89,7 @@ const router = createBrowserRouter([
       { path: "/warehousemanagement", element: <WarehouseManagement /> },
       { path: "/companies", element: <CompanyManagement /> },
       { path: "/products", element: <ProductManagement /> },
+      { path: "/profile", element: <Profile /> },
     ],
   },
 

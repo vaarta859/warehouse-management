@@ -8,7 +8,8 @@ import { INWARD, OUTWARD, canonicalInwardType, canonicalOutwardType } from "./se
 export const OUTWARD_STOCK_SOURCES = {
   [OUTWARD.SALE]: [INWARD.NEW, INWARD.RETURN],
   [OUTWARD.SERVICE]: [INWARD.SERVICE, INWARD.FAULTY],
-  [OUTWARD.REPLACEMENT]: [INWARD.SERVICE, INWARD.REPAIR],
+  [OUTWARD.REPAIR]: [INWARD.REPAIR],
+  [OUTWARD.REPLACEMENT]: [INWARD.SERVICE, INWARD.REPAIR], // legacy entries only
   [OUTWARD.SCRAP]: [INWARD.FAULTY],
 };
 
@@ -207,7 +208,7 @@ const companyKeyOf = (name) => String(name || "").trim().toLowerCase();
  *
  * Inward is counted per company + inward type. Outward is not stored against an inward type, so each
  * outward entry is taken from the inward types its outward type may use (same rules as the serial sources:
- * Sale <- New / Return, Service <- New / Faulty, Replacement <- Service / Repair, Scrap <- Faulty),
+ * Sale <- New / Return, Service <- New / Faulty, Repair <- Repair, Scrap <- Faulty),
  * in that order. Rejected entries hold no stock. This is for showing only - the stock check when saving
  * still uses getWarehouseStock.
  *

@@ -19,6 +19,7 @@ function getActiveKey(pathname) {
   if (pathname.startsWith("/products")) return "products";
   if (pathname.startsWith("/allusers")) return "allusers";
   if (pathname.startsWith("/warehousemanagement")) return "warehousemanagement";
+  if (pathname.startsWith("/profile")) return "profile";
   return "dashboard";
 }
 
@@ -33,6 +34,7 @@ const BACK_PARENT = {
   "/products": "/dashboard",
   "/allusers": "/dashboard",
   "/warehousemanagement": "/dashboard",
+  "/profile": "/dashboard",
 };
 
 export default function AppLayout() {

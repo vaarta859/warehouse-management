@@ -31,7 +31,7 @@ import {
 import { formatOutwardEntry, getStatusStyle, formatMoney } from "../features/outward/outwardHelpers";
 import HistoryPanel from "../features/shared/HistoryPanel";
 
-const filters = ["All types", "Sales", "Service", "Replacement", "Damage/Scrap"];
+const filters = ["All types", "Sales", "Service", "Repair", "Damage/Scrap"];
 
 // Maps the filter chips to the exact outwardType value the backend expects
 // (?type=...), so filtering happens in the database query instead of after
@@ -39,7 +39,7 @@ const filters = ["All types", "Sales", "Service", "Replacement", "Damage/Scrap"]
 const FILTER_TO_OUTWARD_TYPE = {
   Sales: "Sale - Stock Out",
   Service: "Service - Stock Out",
-  Replacement: "Replacement",
+  Repair: "Repair",
   "Damage/Scrap": "Damage / Scrap Out",
 };
 

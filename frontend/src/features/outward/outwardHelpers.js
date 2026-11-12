@@ -126,6 +126,9 @@ export function formatOutwardType(type) {
   const value = String(type).trim();
   const lower = value.toLowerCase();
 
+  if (lower === "repair" || lower.startsWith("repair ")) {
+    return "Repair";
+  }
   if (lower.includes("sale")) {
     return "Sale - Stock Out";
   }
@@ -335,6 +338,7 @@ export const SERIAL_SOURCE_TYPES = {
   "Sale - Stock Out": ["Purchase - New Stock", "Return of Purchase"],
   "Service - Stock Out": ["Purchase - New Stock", "Service/Faulty Stock from Customer"],
   "Service - Stock Out to Customer": ["Purchase - New Stock", "Service/Faulty Stock from Customer"],
-  Replacement: ["Purchase - Service Stock", "Repair-Service Stock"],
+  Repair: ["Repair-Service Stock"],
+  Replacement: ["Purchase - Service Stock", "Repair-Service Stock"], // old entries only
   "Damage / Scrap Out": ["Service/Faulty Stock from Customer"],
 };

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearPersistedUiState } from "../features/shared/usePersistedState";
 import {
   MapPin,
   Package,
   LogOut,
   ChevronDown,
+  UserCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
@@ -18,6 +19,8 @@ import {
 function Navbar({ location = "Delhi Warehouse" }) {
   const [user, setUser] = useState(null);
   const [warehouseOpen, setWarehouseOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef(null);
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const warehouses = useSelector(selectWarehouses);
@@ -42,6 +45,20 @@ function Navbar({ location = "Delhi Warehouse" }) {
       }
     }
   }, [dispatch]);
+
+  // Close the profile menu when clicking anywhere else.
+  useEffect(() => {
+    if (!profileOpen) return undefined;
+    const onDown = (event) => {
+      if (profileRef.current && !profileRef.current.contains(event.target)) setProfileOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [profileOpen]);
 
   const userName = user?.name || "User";
   const userRole = user?.role || "";
@@ -114,25 +131,48 @@ function Navbar({ location = "Delhi Warehouse" }) {
           </div>
         )}
 
-        {/* User */}
-        <div className="flex shrink-0 items-center gap-2">
-
-          {/* Initials */}
-          <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-purple-700 text-xs font-semibold">
-            {initials}
-          </div>
-
-          {/* Name + Role */}
-          <div className="hidden md:block leading-tight">
-            <div className="text-white text-sm font-semibold">
-              {userName}
+        {/* User - click for the profile menu */}
+        <div ref={profileRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setProfileOpen((v) => !v)}
+            aria-label="Open profile menu"
+            aria-expanded={profileOpen}
+            className="flex items-center gap-2 rounded-full p-0.5 pr-1 hover:bg-white/15 md:pr-2"
+          >
+            {/* Initials */}
+            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-purple-700 text-xs font-semibold">
+              {initials}
             </div>
 
-            <div className="text-white/75 text-xs">
-              {userRole}
+            {/* Name + Role */}
+            <div className="hidden md:block text-left leading-tight">
+              <div className="text-white text-sm font-semibold">{userName}</div>
+              <div className="text-white/75 text-xs">{userRole}</div>
             </div>
-          </div>
 
+            <ChevronDown size={14} className={`hidden text-white/80 transition md:block ${profileOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {profileOpen && (
+            <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+              <div className="border-b border-gray-100 px-3 py-2">
+                <p className="truncate text-sm font-semibold text-gray-900">{userName}</p>
+                <p className="truncate text-xs text-gray-500">{user?.email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfileOpen(false);
+                  navigate("/profile");
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <UserCircle size={16} />
+                Profile
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Sign out - mobile only, sidebar handles it on desktop */}

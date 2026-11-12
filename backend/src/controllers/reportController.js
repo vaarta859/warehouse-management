@@ -4,7 +4,7 @@ import { isFinanceSide, getFinanceWarehouseIds, getUserCompanyIds } from "../uti
 import { INWARD, OUTWARD_SERIAL_SOURCES, canonicalInwardType, canonicalOutwardType, compareSerials } from "../utils/serialSources.js";
 import { serialKey } from "../utils/serials.js";
 import { transferInAt } from "../utils/transferSerials.js";
-import { balancesByType, effectiveOutwardQty, outwardGroupBy } from "../utils/stock.js";
+import { balancesByType, effectiveOutwardQty, outwardGroupBy, OUTWARD_STOCK_SOURCES } from "../utils/stock.js";
  
 /**
  * =========================================================
@@ -527,6 +527,19 @@ export async function getStockLedger(req, res) {
       t.currentStock += row.currentStock;
     }
     totals.byUom = totalsByUom;
+    // Same totals per category (Inverter, RMS device, AC cable...) so the summary cards can list them.
+    const byCategoryMap = new Map();
+    for (const row of allRows) {
+      const k = `${norm(row.category)}::${row.uom || "Pcs"}`;
+      if (!byCategoryMap.has(k)) {
+        byCategoryMap.set(k, { category: row.category, uom: row.uom || "Pcs", totalInward: 0, totalOutward: 0, currentStock: 0 });
+      }
+      const c = byCategoryMap.get(k);
+      c.totalInward += row.inward;
+      c.totalOutward += row.outward;
+      c.currentStock += row.currentStock;
+    }
+    totals.byCategory = [...byCategoryMap.values()].sort((a, b) => String(a.category).localeCompare(String(b.category)));
  
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const pageSizeNum = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 100);
@@ -680,6 +693,7 @@ export async function getStockLedgerSerials(req, res) {
 
     const wantedType = String(stockType).trim().toLowerCase();
     const list = [];
+    const typeSummary = {}; // every serial found for this item, by the stock type it last came in as (before the stock type filter)
     for (const s of serials.values()) {
       s.events.sort((a, b) => new Date(a.at) - new Date(b.at));
       const ins = s.events.filter((e) => e.dir === "IN");
@@ -689,12 +703,20 @@ export async function getStockLedgerSerials(req, res) {
       const lastOut = outs[outs.length - 1] || null;
       const inStock = last.dir === "IN";
       const outWithoutInward = ins.length === 0;
+      const typeName = lastIn ? SERIAL_TYPE_LABELS[lastIn.type] || lastIn.type : "No inward";
+      typeSummary[typeName] = (typeSummary[typeName] || 0) + 1;
 
       // Stock type = how it last came in; an out-without-inward serial has none, so it matches the types its outward type may use.
       if (wantedType) {
         const matches = lastIn
           ? (SERIAL_TYPE_LABELS[lastIn.type] || lastIn.type).toLowerCase() === wantedType
-          : outs.some((o) => (OUTWARD_SERIAL_SOURCES[o.outwardType] || []).some((t) => (SERIAL_TYPE_LABELS[t] || t).toLowerCase() === wantedType));
+          : outs.some((o) =>
+              // Same rule the ledger uses to count this outward (a Service - Stock Out is Service stock, a Sale is New stock ...),
+              // so each outward serial is shown under the same stock type the ledger counted it in.
+              (OUTWARD_STOCK_SOURCES[o.outwardType] || OUTWARD_SERIAL_SOURCES[o.outwardType] || []).some(
+                (t) => (SERIAL_TYPE_LABELS[t] || t).toLowerCase() === wantedType
+              )
+            );
         if (!matches) continue;
       }
 
@@ -725,6 +747,51 @@ export async function getStockLedgerSerials(req, res) {
       { total: 0, inStock: 0, out: 0, outWithoutInward: 0 }
     );
 
+    // Outward quantity vs serial numbers recorded, per outward entry - shows where "68 went out" but only 66 serials exist:
+    // an outward whose quantity is higher than the serials scanned on it, or the same serial used on more than one outward.
+    let outwardCheck = null;
+    if ((category || sku) && !String(search).trim()) {
+      const itemRows = await prisma.minItem.findMany({
+        where: {
+          ...(category ? { category: { equals: String(category).trim(), mode: "insensitive" } } : {}),
+          ...(sku ? { sku: { equals: String(sku).trim(), mode: "insensitive" } } : {}),
+          min: { AND: [warehouseWhere(warehouseIds), companyFilter], status: { not: "REJECTED" } },
+        },
+        select: { quantity: true, finalQuantity: true, min: { select: { id: true, outwardNumber: true, outwardType: true } } },
+      });
+      const perOutward = new Map(); // outward id -> { id, number, outwardType, quantity, serials:Set }
+      for (const r of itemRows) {
+        const e = perOutward.get(r.min.id) || { id: r.min.id, number: r.min.outwardNumber, outwardType: canonicalOutwardType(r.min.outwardType), quantity: 0, serials: new Set() };
+        e.quantity += effectiveOutwardQty(r);
+        perOutward.set(r.min.id, e);
+      }
+      let serialRowsOut = 0;
+      for (const r of minRows) {
+        const e = perOutward.get(r.min.id);
+        serialRowsOut += 1;
+        if (e) e.serials.add(String(r.serialNo).trim().toLowerCase());
+      }
+      const mismatched = [...perOutward.values()]
+        .filter((e) => e.quantity !== e.serials.size)
+        .map((e) => ({ id: e.id, number: e.number, outwardType: e.outwardType, quantity: e.quantity, serials: e.serials.size }))
+        .sort((a, b) => String(a.number).localeCompare(String(b.number)));
+      const duplicates = [];
+      for (const s of serials.values()) {
+        const outs = s.events.filter((e) => e.kind === "OUTWARD");
+        const ins = s.events.filter((e) => e.dir === "IN");
+        // Out more times than it ever came in (or twice with no inward) = the same serial scanned on several outwards.
+        if (outs.length > Math.max(ins.length, 1)) duplicates.push({ serialNo: s.serialNo, outwards: outs.map((o) => ({ id: o.id, number: o.number })) });
+      }
+      duplicates.sort((a, b) => compareSerials(a.serialNo, b.serialNo));
+      outwardCheck = {
+        outwardQuantity: [...perOutward.values()].reduce((n, e) => n + e.quantity, 0),
+        serialsRecorded: serialRowsOut,
+        distinctSerials: new Set(minRows.map((r) => String(r.serialNo).trim().toLowerCase())).size,
+        mismatched,
+        duplicates,
+      };
+    }
+
     const wantedStatus = String(status).trim().toLowerCase();
     const filtered = list
       .filter((r) => {
@@ -750,6 +817,8 @@ export async function getStockLedgerSerials(req, res) {
     return res.json({
       data: rows,
       counts,
+      outwardCheck,
+      typeSummary,
       pagination: { page: pageNum, pageSize: pageSizeNum, total: filtered.length, totalPages: Math.ceil(filtered.length / pageSizeNum) || 1 },
     });
   } catch (error) {

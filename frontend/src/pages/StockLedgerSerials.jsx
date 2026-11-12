@@ -5,6 +5,8 @@ import { ArrowLeft, ArrowRight, Search, X } from "lucide-react";
 
 import apiClient from "../services/apiClient";
 
+const formatNumber = (v) => Number(v || 0).toLocaleString("en-IN");
+
 const formatDate = (v) =>
   v ? new Date(v).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "-";
 
@@ -174,6 +176,8 @@ export default function StockLedgerSerials() {
     stockType: params.get("stockType") || undefined,
   };
   const scopeKey = JSON.stringify(scope);
+  const ledgerStockParam = params.get("ledgerStock");
+  const ledgerStock = ledgerStockParam === null || ledgerStockParam === "" ? null : Number(ledgerStockParam);
   const hasProduct = Boolean(category || sku);
 
   // Remembered per item, so coming back from an outward / inward lands on the same search, tab and page.
@@ -181,7 +185,7 @@ export default function StockLedgerSerials() {
   const [search, setSearch] = usePersistedState(`${memoryKey}:search`, params.get("search") || "");
   const [status, setStatus] = usePersistedState(`${memoryKey}:status`, "");
   const [page, setPage] = usePersistedState(`${memoryKey}:page`, 1);
-  const [state, setState] = useState({ loading: false, error: "", rows: [], counts: null, pagination: null });
+  const [state, setState] = useState({ loading: false, error: "", rows: [], counts: null, pagination: null, outwardCheck: null, typeSummary: null });
   const [inwardTarget, setInwardTarget] = useState(null);
 
   useResetPageOnChange(JSON.stringify([search, status, category, sku, scopeKey]), () => setPage(1));
@@ -196,7 +200,7 @@ export default function StockLedgerSerials() {
     setState((s) => ({ ...s, loading: true, error: "" }));
     apiClient
       .get("/api/reports/stock-ledger/serials", { params: { ...scope, category: category || undefined, sku: sku || undefined, search: search.trim() || undefined, status: status || undefined, page, pageSize: 50 } })
-      .then(({ data }) => !cancelled && setState({ loading: false, error: "", rows: data.data || [], counts: data.counts, pagination: data.pagination }))
+      .then(({ data }) => !cancelled && setState({ loading: false, error: "", rows: data.data || [], counts: data.counts, pagination: data.pagination, outwardCheck: data.outwardCheck || null, typeSummary: data.typeSummary || null }))
       .catch((e) => !cancelled && setState({ loading: false, error: e.response?.data?.message || "Failed to load serial numbers", rows: [], counts: null, pagination: null }));
     return () => {
       cancelled = true;
@@ -216,7 +220,8 @@ export default function StockLedgerSerials() {
     };
   }, [load]);
 
-  const { loading, error, rows, counts, pagination } = state;
+  const { loading, error, rows, counts, pagination, outwardCheck, typeSummary } = state;
+  const otherTypes = typeSummary ? Object.entries(typeSummary).filter(([, n]) => n > 0) : [];
   const title = hasProduct ? [category, sku].filter(Boolean).join(" · ") : "Search serial number";
   const subtitle = [scope.companyName, scope.stockType && `${scope.stockType} stock`].filter(Boolean).join(" · ");
 
@@ -255,6 +260,62 @@ export default function StockLedgerSerials() {
           </div>
         </div>
 
+        {counts && ledgerStock !== null && !search.trim() && Number.isFinite(ledgerStock) && ledgerStock !== counts.inStock && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-semibold">
+              Stock Ledger shows {ledgerStock} in stock, but {counts.inStock} serial {counts.inStock === 1 ? "number is" : "numbers are"} marked "In stock" here.
+            </p>
+            <p className="mt-1 text-amber-800">
+              The ledger counts quantities, this page counts serial numbers. They differ when an outward was scanned with a serial that does not match the one received on
+              the inward (a different or partial serial), or when an inward was saved without its serial numbers. Check the "Out without inward" serials and correct them
+              on the outward entry. The ledger quantity ({ledgerStock}) is the stock on hand.
+            </p>
+          </div>
+        )}
+
+        {outwardCheck && (outwardCheck.mismatched.length > 0 || outwardCheck.duplicates.length > 0) && (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+            <p className="font-semibold">
+              {formatNumber(outwardCheck.outwardQuantity)} went out on outward entries, but only {formatNumber(outwardCheck.distinctSerials)} different serial numbers are recorded on them.
+            </p>
+
+            {outwardCheck.mismatched.length > 0 && (
+              <div className="mt-2">
+                <p className="font-semibold text-rose-800">Outward entries where quantity and serial numbers differ</p>
+                <ul className="mt-1 space-y-0.5">
+                  {outwardCheck.mismatched.map((m) => (
+                    <li key={m.id}>
+                      <Link to={`/outward/${m.id}`} className="font-semibold underline-offset-2 hover:underline">{m.number}</Link>
+                      {" - quantity "}{m.quantity}{", serial numbers "}{m.serials}
+                      {m.quantity > m.serials ? ` (${m.quantity - m.serials} serial no. missing)` : ` (${m.serials - m.quantity} extra)`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {outwardCheck.duplicates.length > 0 && (
+              <div className="mt-2">
+                <p className="font-semibold text-rose-800">Same serial number used on more than one outward</p>
+                <ul className="mt-1 space-y-0.5">
+                  {outwardCheck.duplicates.map((d) => (
+                    <li key={d.serialNo}>
+                      <span className="font-mono font-semibold">{d.serialNo}</span>
+                      {" - "}
+                      {d.outwards.map((o, i) => (
+                        <span key={o.id}>
+                          {i > 0 && ", "}
+                          <Link to={`/outward/${o.id}`} className="underline-offset-2 hover:underline">{o.number}</Link>
+                        </span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
         {counts && (
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {cards.map(([label, value, card, labelCls, valueCls]) => (
@@ -287,7 +348,27 @@ export default function StockLedgerSerials() {
           )}
           {!loading && !error && (hasProduct || search.trim()) && rows.length === 0 && (
             <p className="px-5 py-10 text-center text-sm text-gray-500">
-              {search.trim() || status ? "No matching serial numbers." : "This item has no serial numbers."}
+              {search.trim() || status
+                ? "No matching serial numbers."
+                : scope.stockType && otherTypes.length
+                  ? `No serial numbers are linked to ${scope.stockType} stock.`
+                  : "This item has no serial numbers."}
+              {!search.trim() && !status && scope.stockType && otherTypes.length > 0 && (
+                <span className="mt-2 block text-xs text-gray-600">
+                  This item has serial numbers under other stock types: {otherTypes.map(([t, n]) => `${t} (${n})`).join(", ")}.{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const q = new URLSearchParams(params);
+                      q.delete("stockType");
+                      navigate(`/stock-ledger/serials?${q.toString()}`);
+                    }}
+                    className="font-semibold text-blue-600 hover:underline"
+                  >
+                    Show all stock types
+                  </button>
+                </span>
+              )}
             </p>
           )}
 

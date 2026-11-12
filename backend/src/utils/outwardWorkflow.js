@@ -1,5 +1,6 @@
 import prisma from "../config/prisma.js";
 import { warehouseIdsForCompanies } from "./warehouseCompanies.js";
+import { OUTWARD, canonicalOutwardType } from "./serialSources.js";
 
 /**
  * =========================================================
@@ -202,7 +203,18 @@ export function shapeForFinance(entry) {
 export const PHONE_RE = /^\d{10}$/;
 export const UTR_RE = /^\d{12}$/;
 
+/** A Repair outward (sent out for repair) needs no PI details: PI no., date, amount and file are all optional. */
+export const isPiOptional = (outwardType) => canonicalOutwardType(outwardType) === OUTWARD.REPAIR;
+
 export function validatePi(data) {
+  if (isPiOptional(data.outwardType)) {
+    // Optional, but whatever is filled in must still be valid.
+    if (data.piDate && Number.isNaN(new Date(data.piDate).getTime())) return "PI date is not a valid date";
+    const given = data.piAmount !== "" && data.piAmount !== null && data.piAmount !== undefined;
+    if (given && (!Number.isFinite(Number(data.piAmount)) || Number(data.piAmount) < 0)) return "PI amount must be 0 or more";
+    if (data.piFileKey && !/^(min|uploads)\//.test(String(data.piFileKey))) return "Invalid PI file";
+    return null;
+  }
   if (!String(data.piNumber || "").trim()) return "PI number is required";
   if (!data.piDate || Number.isNaN(new Date(data.piDate).getTime())) return "PI date is required";
   const amount = data.piAmount === "" || data.piAmount === null || data.piAmount === undefined ? NaN : Number(data.piAmount);
@@ -246,9 +258,9 @@ export function toPartyColumns(data) {
 export function toPiColumns(data, previous) {
   const keep = data.keepPiFile === true && previous?.piFileKey && !data.piFileKey;
   return {
-    piNumber: String(data.piNumber).trim(),
-    piDate: new Date(data.piDate),
-    piAmount: Number(data.piAmount),
+    piNumber: String(data.piNumber ?? "").trim() || null,
+    piDate: data.piDate ? new Date(data.piDate) : null,
+    piAmount: data.piAmount === "" || data.piAmount === null || data.piAmount === undefined ? null : Number(data.piAmount),
     piFileKey: keep ? previous.piFileKey : data.piFileKey || null,
     // The PI file is always named "PI" (keeping its extension), whatever the original file was called.
     piFileName: keep ? previous.piFileName : data.piFileKey ? `PI${/\.[a-z0-9]+$/i.test(String(data.piFileKey)) ? String(data.piFileKey).match(/\.[a-z0-9]+$/i)[0].toLowerCase() : ""}` : null,

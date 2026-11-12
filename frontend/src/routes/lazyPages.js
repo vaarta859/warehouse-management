@@ -33,6 +33,7 @@ const importers = {
   warehousemanagement: () => import("../pages/WarehouseMangement"),
   companies: () => import("../pages/CompanyManagement"),
   products: () => import("../pages/ProductManagement"),
+  profile: () => import("../pages/Profile"),
 };
 
 const RELOAD_FLAG = "lazy-chunk-reloaded";
@@ -77,6 +78,7 @@ export const StockTransferForm = lazyPage(importers.stockTransferForm);
 export const WarehouseManagement = lazyPage(importers.warehousemanagement);
 export const CompanyManagement = lazyPage(importers.companies);
 export const ProductManagement = lazyPage(importers.products);
+export const Profile = lazyPage(importers.profile);
 
 // `key` matches the sidebar keys (dashboard, inward, outward, reports,
 // companies, allusers, warehousemanagement, products) plus the form keys.

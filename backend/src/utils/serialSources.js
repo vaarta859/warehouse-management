@@ -14,7 +14,8 @@ export const compareSerials = (a, b) => serialCollator.compare(String(a), String
  *
  *   Sale - Stock Out      <- Purchase - New Stock, Return of Purchase
  *   Service - Stock Out   <- Purchase - New Stock, Service/Faulty Stock from Customer
- *   Replacement           <- Purchase - Service Stock, Repair-Service Stock
+ *   Repair                <- Repair-Service Stock (what was given in on a Repair inward)
+ *   Replacement (old)     <- Purchase - Service Stock, Repair-Service Stock (no longer offered; old entries keep working)
  *   Damage / Scrap Out    <- Service/Faulty Stock from Customer
  *
  * A serial can leave again only if it came in again after it last left (a sold unit that the customer
@@ -32,13 +33,15 @@ export const INWARD = {
 export const OUTWARD = {
   SALE: "Sale - Stock Out",
   SERVICE: "Service - Stock Out",
-  REPLACEMENT: "Replacement",
+  REPAIR: "Repair",
+  REPLACEMENT: "Replacement", // legacy: no longer offered on the form, kept so old entries still count
   SCRAP: "Damage / Scrap Out",
 };
 
 export const OUTWARD_SERIAL_SOURCES = {
   [OUTWARD.SALE]: [INWARD.NEW, INWARD.RETURN],
   [OUTWARD.SERVICE]: [INWARD.NEW, INWARD.FAULTY],
+  [OUTWARD.REPAIR]: [INWARD.REPAIR],
   [OUTWARD.REPLACEMENT]: [INWARD.SERVICE, INWARD.REPAIR],
   [OUTWARD.SCRAP]: [INWARD.FAULTY],
 };
@@ -61,6 +64,7 @@ export function canonicalInwardType(type) {
 export function canonicalOutwardType(type) {
   const lower = String(type || "").trim().toLowerCase();
   if (!lower) return null;
+  if (lower === "repair" || lower.startsWith("repair - ") || lower.startsWith("repair out")) return OUTWARD.REPAIR;
   if (lower.includes("sale")) return OUTWARD.SALE;
   if (lower.includes("service")) return OUTWARD.SERVICE;
   if (lower.includes("replacement") || lower.includes("return")) return OUTWARD.REPLACEMENT;

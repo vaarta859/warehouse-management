@@ -346,7 +346,7 @@ export default function OutwardForm() {
         setSelectedCompanyId(x.companyId || "");
       }
       setOutwardDateTime(getDateTimeLocal(x.refDocDate || x.createdAt));
-      setOutwardType(/^return/i.test(x.outwardType || "") ? "Replacement" : x.outwardType || "Sale - Stock Out");
+      setOutwardType(/^(return|replacement)/i.test(x.outwardType || "") ? "Replacement" : x.outwardType || "Sale - Stock Out");
       setCustomerName(x.customerName || "");
       setPiNumber(x.piNumber || "");
       setPiDate(x.piDate ? String(x.piDate).slice(0, 10) : "");
@@ -808,7 +808,9 @@ export default function OutwardForm() {
                 <label className={labelCls}>Outward type</label>
                 <div className="relative">
                   <select value={outwardType} onChange={(e) => setOutwardType(e.target.value)} className={`${inputCls} appearance-none`}>
-                    <option>Sale - Stock Out</option><option>Service - Stock Out</option><option>Replacement</option><option>Damage / Scrap Out</option>
+                    <option>Sale - Stock Out</option><option>Service - Stock Out</option><option>Repair</option><option>Damage / Scrap Out</option>
+                    {/* Old entries saved as Replacement keep their type when edited; it is not offered for new entries. */}
+                    {outwardType === "Replacement" && <option>Replacement</option>}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                 </div>
@@ -818,7 +820,8 @@ export default function OutwardForm() {
               <PartyNameField value={customerName} onChange={setCustomerName} sharedOptions={sharedCustomers} onAddOption={saveCustomer} storageKey="outward-customer-names" label="Customer Name" labelCls={labelCls} inputCls={inputCls} placeholder="Enter customer name" addLabel="+ Add new customer" />
             </div>
 
-            {/* PI row: PI No., PI date, PI amount, PI upload */}
+            {/* PI row: PI No., PI date, PI amount, PI upload (all optional for a Repair outward) */}
+            {outwardType === "Repair" && <p className="mt-4 text-xs text-gray-500">PI details are optional for a Repair outward.</p>}
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
               <div>
                 <label className={labelCls}>PI No.</label>
