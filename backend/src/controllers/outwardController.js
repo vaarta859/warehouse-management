@@ -647,8 +647,20 @@ export async function getAvailableSerials(req, res) {
     const entry = await prisma.min.findUnique({ where: { id }, select: { warehouseId: true, outwardType: true, items: true } });
     if (!entry) return res.status(404).json({ message: "Outward entry not found" });
     await assertWarehouseAccess(req, entry.warehouseId, "canOutward");
-    const items = await withSerialModes(prisma, entry.items);
-    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType: entry.outwardType, minId: id, items });
+    // The edit form (Super admin) asks about the items / outward type as they are being edited, not as saved.
+    let rawItems = entry.items;
+    let outwardType = entry.outwardType;
+    if (req.query.items) {
+      try {
+        const parsed = JSON.parse(String(req.query.items));
+        if (Array.isArray(parsed)) {
+          rawItems = parsed.slice(0, 100).map((i) => ({ category: String(i?.category || ""), sku: String(i?.sku || ""), quantity: Number(i?.quantity) || 0, uom: String(i?.uom || "") }));
+        }
+      } catch { /* bad JSON: fall back to the saved items */ }
+    }
+    if (req.query.outwardType) outwardType = String(req.query.outwardType);
+    const items = await withSerialModes(prisma, rawItems);
+    const data = await listAvailableSerials(prisma, { warehouseId: entry.warehouseId, outwardType, minId: id, items });
     // `blocked`: already dispatched / added to another outward (refused at the scan). Any other serial can be scanned,
     // even when it is not on an inward entry.
     const blocked = await listBlockedSerials(prisma, { minId: id, items, available: data });
@@ -932,6 +944,10 @@ export async function updateOutward(req, res) {
 
     const newItems = normalized.map((item) => toItemRow(item, existingById.get(item.serverId)));
 
+    // Super admin (or a manager allowed to update): serial numbers can be edited in the same save, so items can be
+    // added / changed together with their serials. Without `serials` the old rule applies (see below).
+    const serialsInput = isAdmin && !direct && Array.isArray(data.serials) ? cleanSerials(data.serials) : null;
+
     // Update after dispatch (Super admin): the same save also carries the dispatch details.
     let dispatchUpdate = null;
     if (isAdmin && isDispatchedStatus(existing.status) && data.dispatch) {
@@ -1016,7 +1032,10 @@ export async function updateOutward(req, res) {
       const wasOnHold = current.status === STATUS.ON_HOLD;
       // ANY update (Sales or super admin) on an approved, not-yet-dispatched entry sends it back for
       // approval again. A dispatched / delivered entry edited by the super admin keeps its status.
-      const resubmit = current.status === STATUS.PENDING_APPROVAL || wasRejected || wasApproved || wasOnHold;
+      // Exception: once the transportation details are submitted (or the entry is shipped / delivered), an admin
+      // update keeps the entry's approval and status - it is not sent to Account again.
+      const adminKeepsApproval = isAdmin && wasApproved && Boolean(current.transportSubmittedAt);
+      const resubmit = current.status === STATUS.PENDING_APPROVAL || wasRejected || (wasApproved && !adminKeepsApproval) || wasOnHold;
       sentForApproval = resubmit;
 
       if (!direct) {
@@ -1046,8 +1065,28 @@ export async function updateOutward(req, res) {
       // Item rows were rewritten: keep the serial numbers that still match, drop the rest.
       const serialItems = await withSerialModes(tx, newItems);
       const hadSerials = (await tx.minSerial.count({ where: { minId: id } })) > 0;
-      const prunedSerials = await pruneSerials(tx, id, serialItems);
-      if (hadSerials) {
+      let serialChange = null;
+      let prunedSerials = 0;
+      if (serialsInput) {
+        // The admin sent the full list of serial numbers for the edited items: it replaces the saved one.
+        const serialProblem = validateSerials(serialItems, serialsInput);
+        if (serialProblem) throw httpError(422, serialProblem);
+        // Same checks as the transportation form: allowed inward types, not already out, no two entries taking one serial.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${existing.warehouseId}))`;
+        const clash = await findSerialSourceProblem(tx, { warehouseId: existing.warehouseId, outwardType: data.outwardType, minId: id, serials: serialsInput });
+        if (clash) throw httpError(422, clash);
+        const before = (await tx.minSerial.findMany({ where: { minId: id }, select: { serialNo: true } })).map((r) => r.serialNo.toLowerCase());
+        const after = serialsInput.map((r) => r.serialNo.toLowerCase());
+        serialChange = {
+          added: after.filter((x) => !before.includes(x)).length,
+          removed: before.filter((x) => !after.includes(x)).length,
+          total: serialsInput.length,
+        };
+        await replaceSerials(tx, id, serialsInput);
+      } else {
+        prunedSerials = await pruneSerials(tx, id, serialItems);
+      }
+      if (hadSerials && !serialsInput) {
         // Serial numbers were already scanned: the edited items must still have all the serial numbers they need.
         const kept = await tx.minSerial.findMany({ where: { minId: id }, select: { category: true, sku: true, serialNo: true } });
         const problem = validateSerials(serialItems, kept);
@@ -1089,8 +1128,11 @@ export async function updateOutward(req, res) {
       if (paymentChanged) entries.push({ ...base, action: "PAYMENT_UPDATED", description: "Payment details updated" });
       if (wasRejected) entries.push({ ...base, action: "RESUBMITTED", description: "Resubmitted for account approval" });
       else if (wasOnHold) entries.push({ ...base, action: "RESUBMITTED", description: "Updated while on hold - sent for account approval again" });
-      else if (wasApproved) entries.push({ ...base, action: "RESUBMITTED", description: "Updated after approval - sent for account approval again" });
+      else if (wasApproved && resubmit) entries.push({ ...base, action: "RESUBMITTED", description: "Updated after approval - sent for account approval again" });
       if (prunedSerials) entries.push({ ...base, action: "SERIALS_UPDATED", description: `${prunedSerials} serial number(s) removed because the items changed` });
+      if (serialChange && (serialChange.added || serialChange.removed)) {
+        entries.push({ ...base, action: "SERIALS_UPDATED", description: `Serial numbers updated: ${serialChange.added} added, ${serialChange.removed} removed (${serialChange.total} in total)`, changes: serialChange });
+      }
       if (!entries.length) entries.push({ ...base, action: "UPDATED", description: "Outward entry saved with no field changes" });
       await recordAuditLogs(tx, entries);
     }, STOCK_TRANSACTION_OPTIONS);

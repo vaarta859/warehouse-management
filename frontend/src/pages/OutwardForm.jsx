@@ -32,8 +32,12 @@ import {
   refTypeDocument,
   isReceivingDocCategory,
   refNumberLabel,
+  SERIAL_SOURCE_TYPES,
+  formatOutwardType,
 } from "../features/outward/outwardHelpers";
 import useProducts from "../features/product/useProducts";
+import useSerialScanner from "../components/SerialScanner";
+import { buildSerialLines, initialSerialValues, serialPayload, serialProblem, withSerialMode, needsSerials, serialKey, cleanSerialInput, countFilled } from "../features/outward/serialHelpers";
 import useOutwardStock, { stockKey } from "../features/outward/useOutwardStock";
 import ItemProductFields, { ItemProductNotice } from "../components/ItemProductFields";
 import PartyNameField from "../components/PartyNameField";
@@ -173,6 +177,9 @@ export default function OutwardForm() {
   // (the server tells us in `permissions.canUpdate`). Company change and the dispatch section stay Super-admin-only.
   const [managerCanUpdate, setManagerCanUpdate] = useState(false);
   const alreadyApproved = isEdit && ["PENDING_DISPATCH", "TRANSPORT_PENDING", "DOCS_PENDING", "READY_FOR_DISPATCH"].includes(entryStatus);
+  // Super admin / allowed manager updating an entry whose transportation is submitted, or that is shipped / delivered:
+  // the save keeps the approval (the server does not send it to Account again), so the button just says Update.
+  const keepsApproval = isEdit && (isSuperAdmin || managerCanUpdate) && (["DISPATCHED", "DELIVERED"].includes(entryStatus) || (alreadyApproved && transportSubmitted));
 
   // Before dispatch the form only holds the sales information (customer, PI details, items, payment status); after
   // approving again the dispatch details are filled on the dispatch page. Once an entry is
@@ -187,6 +194,7 @@ export default function OutwardForm() {
   const [driverContact, setDriverContact] = useState("");
   // Transportation details are frozen once Account has uploaded its documents (the server refuses changes too).
   const [transportLocked, setTransportLocked] = useState(false);
+  const [transportSubmitted, setTransportSubmitted] = useState(false);
   const [dispatchRemarks, setDispatchRemarks] = useState("");
   const [accountRefs, setAccountRefs] = useState([newAccountRef()]);
   const [managerRefs, setManagerRefs] = useState([newManagerRef()]);
@@ -377,6 +385,7 @@ export default function OutwardForm() {
         }))
       );
       setOriginalItems(x.items || []);
+      savedSerialsRef.current = Array.isArray(x.serials) ? x.serials : [];
       {
         const first = (x.items || [])[0];
         if (first) {
@@ -392,6 +401,7 @@ export default function OutwardForm() {
       }
       setEntryStatus(x.workflowStatus || null);
       setTransportLocked(Boolean(x.transportLocked));
+      setTransportSubmitted(Boolean(x.transportSubmittedAt));
       // Prefill what the warehouse already filled (vehicle, mode, reference documents, remarks).
       if (x.dispatchMode && !isPlaceholder(x.dispatchMode)) setDispatchMode(x.dispatchMode);
       setVehicleNumber(x.vehicleNumber || "");
@@ -436,6 +446,63 @@ export default function OutwardForm() {
     }
     return totals;
   }, [originalItems]);
+
+  // ---- Serial numbers (Super admin / manager allowed to update, when editing) -------------------------
+  // The admin can change the serial numbers of the items, and add items together with their serial numbers,
+  // in the same save. One box per Pcs unit, exactly like the transportation form.
+  const showSerialEntry = isEdit && (isSuperAdmin || managerCanUpdate) && !dispatchDirectly;
+  const [serialValues, setSerialValues] = useState({});
+  const savedSerialsRef = useRef([]); // serial numbers saved on the entry when it was opened
+  const [stockSerials, setStockSerials] = useState(null);
+  const [blockedSerials, setBlockedSerials] = useState(null);
+  const serialItems = useMemo(
+    () => withSerialMode(items.map((i) => ({ ...i, quantity: Number(i.quantity) || 0 })), products),
+    [items, products]
+  );
+  const serialLines = useMemo(() => (showSerialEntry ? buildSerialLines(serialItems) : []), [showSerialEntry, serialItems]);
+
+  // Keep one slot per unit for every item that needs serials: filled ones stay, the rest follow the quantity.
+  useEffect(() => {
+    if (!showSerialEntry) return;
+    setSerialValues((prev) => {
+      const next = { ...prev };
+      for (const line of serialLines) {
+        // A quantity being retyped (empty for a moment) must not wipe what was scanned.
+        if (line.quantity === 0 && prev[line.key]) continue;
+        const filled = prev[line.key]
+          ? prev[line.key].filter((x) => cleanSerialInput(x.serialNo))
+          : savedSerialsRef.current
+              .filter((x) => serialKey(x.category, x.sku) === line.key)
+              .map((x) => ({ serialNo: x.serialNo, source: x.source || "MANUAL" }));
+        next[line.key] = Array.from({ length: line.quantity }, (_, i) => filled[i] || { serialNo: "", source: "MANUAL" });
+      }
+      return next;
+    });
+  }, [showSerialEntry, serialLines]);
+
+  // Serial numbers in stock for the items as they are being edited (new models included) and the chosen outward type.
+  const serialFetchKey = useMemo(
+    () => JSON.stringify([outwardType, [...new Set(serialLines.map((l) => l.key))].sort()]),
+    [outwardType, serialLines]
+  );
+  useEffect(() => {
+    if (!showSerialEntry || !editId || !serialLines.length) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      apiClient
+        .get(`/api/outward/${editId}/available-serials`, {
+          params: { outwardType, items: JSON.stringify(serialLines.map((l) => ({ category: l.category, sku: l.sku, quantity: l.quantity, uom: "Pcs" }))) },
+        })
+        .then(({ data }) => {
+          if (cancelled) return;
+          setStockSerials(data?.data || {});
+          setBlockedSerials(data?.blocked || {});
+        })
+        .catch(() => { if (!cancelled) { setStockSerials(null); setBlockedSerials(null); } }); // typing / scanning still works
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [showSerialEntry, editId, serialFetchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const serial = useSerialScanner({ items: serialItems, lines: serialLines, values: serialValues, onChange: setSerialValues, suggestions: stockSerials, blocked: blockedSerials });
 
   // How many of this model ONE item row can still take: what the warehouse has,
   // minus what the OTHER rows on this form already take (so two rows of the same
@@ -585,6 +652,17 @@ export default function OutwardForm() {
       if (!savedCovers) return toast.error("Enter the UTR number or attach a payment proof (image / file).");
     }
 
+    // Serial numbers (admin edit): all-or-nothing per item. An entry that never had serial numbers may still save without them.
+    let serialsToSend;
+    if (showSerialEntry && serialLines.length) {
+      const anyFilled = serialLines.some((l) => countFilled(serialValues, l.key) > 0);
+      if (anyFilled || savedSerialsRef.current.length > 0) {
+        const problem = serialProblem(serialLines, serialValues);
+        if (problem) return toast.error(problem);
+        serialsToSend = serialPayload(serialLines, serialValues);
+      }
+    }
+
     // Can't dispatch more than is in stock. (The server checks again when saving.)
     if (!dispatchDirectly && stockStatus !== "succeeded") return toast.error("Available stock hasn't loaded yet. Please wait a moment (or reload the page) and try again.");
     for (const item of dispatchDirectly ? [] : items) {
@@ -621,6 +699,7 @@ export default function OutwardForm() {
       billToContactNo: billToContactNo.trim() || undefined,
       billToEmail: billToEmail.trim() || undefined,
       dispatchRemarks: salesDispatchRemarks.trim() || undefined,
+      ...(serialsToSend ? { serials: serialsToSend } : {}),
       items: items.map((i) => {
         const paid = paymentNeedsUtr(payment.paymentStatus);
         return {
@@ -699,7 +778,7 @@ export default function OutwardForm() {
             <h1 className="text-base font-semibold text-gray-900 md:text-lg">{isEdit ? "Edit outward entry" : "New outward entry"}</h1>
             <p className="text-xs text-gray-400">
               {isEdit
-                ? "Update the details and send them for approval again"
+                ? keepsApproval ? "Update the details. The entry stays approved - it is not sent to Account again." : "Update the details and send them for approval again"
                 : dispatchDirectly
                   ? "Dispatch directly: no warehouse is involved. It goes to the Account team for approval and is delivered once Account uploads the documents."
                   : "Fill the customer and item details. It goes to the Account team for approval."}
@@ -707,7 +786,7 @@ export default function OutwardForm() {
           </div>
         </div>
 
-        {alreadyApproved && (
+        {alreadyApproved && !keepsApproval && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
             This entry is approved and waiting for dispatch. Saving any change sends it back to the Account team for approval, and the warehouse will not see it until it is approved again.
           </div>
@@ -878,7 +957,10 @@ export default function OutwardForm() {
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 md:p-6">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">Item details</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-900">Item details</h2>
+                {showSerialEntry && serial.badge}
+              </div>
               <button type="button" onClick={addItem} className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-semibold text-blue-700"><Plus size={14} />Add item</button>
             </div>
             <ItemProductNotice isAdmin={isSuperAdmin} />
@@ -939,10 +1021,28 @@ export default function OutwardForm() {
                       </>
                     </div>
 
+                    {showSerialEntry && needsSerials(serialItems[index] || {}) && (
+                      <div className="mt-3 border-t border-gray-100 pt-3">
+                        <p className="mb-1.5 text-xs font-semibold text-gray-700">Serial numbers</p>
+                        <table className="w-full">
+                          <tbody>
+                            <tr><td className="p-0">{serial.inputCell(serialItems[index], index, true)}</td></tr>
+                            {serial.listRow(serialItems[index], index, 1)}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
+            {showSerialEntry && serial.hasSerials && (
+              <p className="mt-2 text-xs text-gray-500">
+                Type or scan a serial no. for each item (one per unit). New items need theirs here too.
+                {SERIAL_SOURCE_TYPES[formatOutwardType(outwardType)] ? ` ${formatOutwardType(outwardType)}: serial numbers must have come in through ${SERIAL_SOURCE_TYPES[formatOutwardType(outwardType)].join(" or ")}.` : ""}
+              </p>
+            )}
+            {showSerialEntry && serial.camera}
 
             {/* Payment side - entered once for all items; never shown to the warehouse manager. */}
             <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50/40 p-3">
@@ -1113,7 +1213,7 @@ export default function OutwardForm() {
           )}
 
           <button type="submit" disabled={saving || proofUploadingId !== null || piUploading} className="w-full rounded-lg bg-gray-900 py-3 text-sm font-semibold text-white hover:bg-black disabled:opacity-40">
-            {saving ? "Saving..." : isEdit ? "Save and send for approval" : "Submit for approval"}
+            {saving ? "Saving..." : isEdit ? (keepsApproval ? "Update" : "Save and send for approval") : "Submit for approval"}
           </button>
         </form>
       </div>
