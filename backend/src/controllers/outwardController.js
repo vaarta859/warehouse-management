@@ -408,9 +408,11 @@ export async function getOutwardSummary(req, res) {
     ]);
 
     let total = 0, pendingApproval = 0, awaitingDispatch = 0, dispatched = 0;
+    const byStatus = {}; // every entry in scope, counted by its saved status (the dashboard pipeline)
     for (const g of groups) {
       const n = g._count._all;
       total += n;
+      byStatus[g.status] = (byStatus[g.status] || 0) + n;
       if (g.status === STATUS.PENDING_APPROVAL) pendingApproval += n;
       if (APPROVED_STATUSES.includes(g.status)) awaitingDispatch += n;
       if (DISPATCHED_STATUSES.includes(g.status)) dispatched += n;
@@ -425,7 +427,7 @@ export async function getOutwardSummary(req, res) {
       for (const list of byEntry.values()) documentsPending += documentStatus(documentsForWarehouse(list)).pendingDocuments;
     }
 
-    return res.json({ data: { total, pendingApproval, awaitingDispatch, dispatched, documentsPending } });
+    return res.json({ data: { total, pendingApproval, awaitingDispatch, dispatched, documentsPending, byStatus } });
   } catch (error) {
     console.error("Outward summary error:", error);
     return res.status(500).json({ message: "Failed to fetch summary", error: error.message });

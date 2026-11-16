@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Link } from "react-router-dom";
+import apiClient from "../services/apiClient";
 
 import {
   ArrowDownToLine,
@@ -35,6 +36,7 @@ import { formatGrn } from "../features/inward/inwardHelpers";
 import {
   formatOutwardEntry,
   getStatusStyle,
+  WORKFLOW_STATUS,
 } from "../features/outward/outwardHelpers";
 
 // =====================================================
@@ -139,6 +141,17 @@ export default function Dashboard() {
     dispatch(fetchWarehouses({ search: "" }));
   }, [dispatch, user?.companyId, role, scopedWarehouseId]);
 
+  // Counts of ALL outward entries by status (the lists above hold only the newest 100).
+  const [statusCounts, setStatusCounts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get("/api/outward/summary", { params: { warehouseId: scopedWarehouseId } })
+      .then(({ data }) => { if (!cancelled) setStatusCounts(data?.data?.byStatus || null); })
+      .catch(() => { if (!cancelled) setStatusCounts(null); });
+    return () => { cancelled = true; };
+  }, [user?.companyId, role, scopedWarehouseId]);
+
   // ===================================================
   // PERMISSIONS
   // ===================================================
@@ -177,10 +190,12 @@ export default function Dashboard() {
     const outToday = outward.filter((e) => dayKey(e.createdAt) === todayKey);
     const sum = (list) => qtyText(list.flatMap((e) => e.items || []));
 
-    const outOpen = outward.filter((e) => {
-      const label = getStatusStyle(e)?.label;
-      return label !== "Delivered" && label !== "Shipped" && label !== "Dispatched";
-    }).length;
+    const outOpen = statusCounts
+      ? Object.entries(statusCounts).filter(([status]) => status !== "DISPATCHED" && status !== "DELIVERED").reduce((n, [, c]) => n + c, 0)
+      : outward.filter((e) => {
+          const label = getStatusStyle(e)?.label;
+          return label !== "Delivered" && label !== "Shipped" && label !== "Dispatched";
+        }).length;
     const inPending = inward.filter((e) => e.statusType === "pending").length;
 
     return {
@@ -192,10 +207,21 @@ export default function Dashboard() {
       outOpen,
       inPending,
     };
-  }, [inward, outward, todayKey]);
+  }, [inward, outward, todayKey, statusCounts]);
 
   // Outward pipeline by status label
   const pipeline = useMemo(() => {
+    // Preferred: the server's count of every entry by status, so it matches the Outward list filters
+    // (Delivered here = Delivered there, including entries delivered directly).
+    if (statusCounts) {
+      return Object.entries(statusCounts)
+        .filter(([, value]) => value > 0)
+        .map(([status, value]) => {
+          const label = WORKFLOW_STATUS[status]?.label || status;
+          return { label, value, color: STATUS_COLOR[label] || C.slate };
+        })
+        .sort((a, b) => b.value - a.value);
+    }
     const counts = new Map();
     outward.forEach((e) => {
       const label = getStatusStyle(e)?.label || "Other";
@@ -208,7 +234,7 @@ export default function Dashboard() {
         color: STATUS_COLOR[label] || C.slate,
       }))
       .sort((a, b) => b.value - a.value);
-  }, [outward]);
+  }, [outward, statusCounts]);
 
   // Recent activity (both lists merged)
   const activity = useMemo(() => {
