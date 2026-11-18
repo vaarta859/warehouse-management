@@ -336,8 +336,8 @@ export const totalCost = (items = []) =>
 // Which inward types an outward type's serial numbers can be scanned from (the server enforces the same rule).
 export const SERIAL_SOURCE_TYPES = {
   "Sale - Stock Out": ["Purchase - New Stock", "Return of Purchase"],
-  "Service - Stock Out": ["Purchase - New Stock", "Service/Faulty Stock from Customer"],
-  "Service - Stock Out to Customer": ["Purchase - New Stock", "Service/Faulty Stock from Customer"],
+  "Service - Stock Out": ["Purchase - Service Stock"],
+  "Service - Stock Out to Customer": ["Purchase - Service Stock"],
   Repair: ["Repair-Service Stock"],
   Replacement: ["Purchase - Service Stock", "Repair-Service Stock"], // old entries only
   "Damage / Scrap Out": ["Service/Faulty Stock from Customer"],

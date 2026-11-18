@@ -13,7 +13,7 @@ export const compareSerials = (a, b) => serialCollator.compare(String(a), String
  * have come in through one of the inward types allowed for that outward type:
  *
  *   Sale - Stock Out      <- Purchase - New Stock, Return of Purchase
- *   Service - Stock Out   <- Purchase - New Stock, Service/Faulty Stock from Customer
+ *   Service - Stock Out   <- Purchase - Service Stock only (not New, not Service/Faulty Stock from Customer)
  *   Repair                <- Repair-Service Stock (what was given in on a Repair inward)
  *   Replacement (old)     <- Purchase - Service Stock, Repair-Service Stock (no longer offered; old entries keep working)
  *   Damage / Scrap Out    <- Service/Faulty Stock from Customer
@@ -40,7 +40,7 @@ export const OUTWARD = {
 
 export const OUTWARD_SERIAL_SOURCES = {
   [OUTWARD.SALE]: [INWARD.NEW, INWARD.RETURN],
-  [OUTWARD.SERVICE]: [INWARD.NEW, INWARD.FAULTY],
+  [OUTWARD.SERVICE]: [INWARD.SERVICE],
   [OUTWARD.REPAIR]: [INWARD.REPAIR],
   [OUTWARD.REPLACEMENT]: [INWARD.SERVICE, INWARD.REPAIR],
   [OUTWARD.SCRAP]: [INWARD.FAULTY],
